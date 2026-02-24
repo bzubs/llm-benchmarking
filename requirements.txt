@@ -1,0 +1,9 @@
+streamlit>=1.28.0
+pydantic>=2.0.0
+pynvml
+vllm
+transformers
+torch
+huggingface-hub
+bcrypt
+python-dotenv

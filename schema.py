@@ -6,9 +6,12 @@ class BenchmarkConfig(BaseModel):
     # mode
     benchmark_mode: str = "Online (Real-time Serving)"
     benchmark_type: Literal["latency", "throughput", "serve"] = "serve"
+    #user
+    username : str = "None"
+
     # device
     device: Literal["gpu7", "gpu6"] = "gpu7"
-    # model
+    
     model_name: str
     dtype: Optional[Literal["auto", "float16", "float32", "bfloat16"]] = "fp16"
     max_model_len : Optional[int] = 256

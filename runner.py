@@ -6,79 +6,48 @@ import os
 from datetime import datetime
 from schema import BenchmarkConfig
 from cli_builder import env_for_gpu
-from writer import write_server_log
+from writer import write_server_log, write_benchmark_log, append_jsonl_history
 from helper import detect_model_type
+
+
 import urllib.request
 
-
-def append_jsonl_history(cfg: BenchmarkConfig,
-                         duration: float,
-                         return_code: int,
-                         metrics: dict,
-                         benchmark_mode: str = "Offline"):
-
-    record = {
-        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "benchmark_mode": benchmark_mode,
-        "benchmark_type": cfg.benchmark_type,
-        "model": cfg.model_name,
-        "gpu": cfg.device if hasattr(cfg, "device") else None,
-        "runtime_sec": duration,
-        "return_code": return_code,
-
-        # Core metrics (safe access)
-        "successful_requests": metrics.get("successful_requests"),
-        "request_throughput": metrics.get("request_throughput"),
-        "output_token_throughput": metrics.get("output_token_throughput"),
-        "total_token_throughput": metrics.get("total_token_throughput"),
-
-        "median_ttft_ms": metrics.get("median_ttft_ms"),
-        "median_tpot_ms": metrics.get("median_tpot_ms"),
-        "median_itl_ms": metrics.get("median_itl_ms"),
-
-        # Useful config snapshot
-        "num_prompts": cfg.num_prompts,
-        "max_concurrency": cfg.max_concurrency,
-        "input_len": cfg.input_len,
-        "output_len": cfg.output_len,
-        "quantization": cfg.quantization,
-        "dtype": cfg.dtype,
-        "gpu_memory_util": cfg.gpu_memory_util,
-    }
-
-    with open("runs_history.jsonl", "a") as f:
-        f.write(json.dumps(record) + "\n")
+import threading
+from pynvml import (
+    nvmlInit,
+    nvmlShutdown,
+    nvmlDeviceGetHandleByIndex,
+    nvmlDeviceGetUtilizationRates,
+    nvmlDeviceGetMemoryInfo,
+    NVMLError
+)
 
 
-def write_benchmark_log(cfg: BenchmarkConfig, duration: float, return_code: int,
-                        metrics: dict, stderr: str, stdout: str,
-                        benchmark_mode: str = "Offline"):
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    log_entry = f"""
-{'='*80}
-Timestamp: {timestamp}
-Benchmark Mode: {benchmark_mode}
-Benchmark Type: {cfg.benchmark_type}
-Model: {cfg.model_name}
-GPU ID: {cfg.device if hasattr(cfg, 'device') else 'N/A'}
-Runtime: {duration:.2f} seconds
-Return Code: {return_code}
+def sample_gpu_stats(gpu_id: int, stop_event: threading.Event, samples: list):
+    try:
+        nvmlInit()
+        handle = nvmlDeviceGetHandleByIndex(gpu_id)
 
-Configuration:
-{json.dumps(cfg.model_dump(), indent=2)}
+        while not stop_event.is_set():
+            util = nvmlDeviceGetUtilizationRates(handle)
+            mem = nvmlDeviceGetMemoryInfo(handle)
 
-Metrics ({len(metrics)} found):
-{json.dumps(metrics, indent=2)}
+            samples.append({
+                "gpu_util_percent": util.gpu,
+                "mem_used_mb": mem.used / 1024 / 1024,
+                "mem_total_mb": mem.total / 1024 / 1024
+            })
 
-Stderr Output (last 1000 chars):
-{stderr[-1000:] if len(stderr) > 1000 else stderr}
+            time.sleep(0.2)
 
-Stdout Output (last 1000 chars):
-{stdout[-1000:] if len(stdout) > 1000 else stdout}
-{'='*80}
-"""
-    with open("logs.txt", "a") as f:
-        f.write(log_entry)
+    except NVMLError as e:
+        write_server_log(f"[GPU SAMPLER ERROR] {str(e)}")
+
+    finally:
+        try:
+            nvmlShutdown()
+        except:
+            pass
 
 
 def check_metrics_parsing_error(metrics: dict, stderr: str,
@@ -103,6 +72,9 @@ def check_metrics_parsing_error(metrics: dict, stderr: str,
 
 
 def parse_metrics(stdout: str, benchmark_type: str) -> dict:
+    """
+    Parses STDOUT for metrics in the expected format with the help of regex
+    """
     metrics = {}
 
     write_server_log(f"[PARSE_METRICS] Parsing metrics for {benchmark_type}")
@@ -139,6 +111,9 @@ def parse_metrics(stdout: str, benchmark_type: str) -> dict:
 
 #Checking for server readiness
 def wait_for_vllm_ready(host: str, port: int, timeout: int = 180) -> bool:
+    """
+    Checks if server is ready
+    """
     start = time.time()
     url = f"http://{host}:{port}/v1/models"
 
@@ -160,6 +135,10 @@ def wait_for_vllm_ready(host: str, port: int, timeout: int = 180) -> bool:
 
 def start_vllm_server(cfg: BenchmarkConfig, gpu_id: int = 7,
                       host: str = "127.0.0.1", port: int = 8000):
+
+    """
+    Starts vLLM server using the provided config at localhost and port 8000 on specified GPU
+    """
 
     cmd = [
         "vllm", "serve", cfg.model_name,
@@ -188,18 +167,32 @@ def start_vllm_server(cfg: BenchmarkConfig, gpu_id: int = 7,
 
     if not wait_for_vllm_ready(host, port):
         proc.terminate()
-        raise RuntimeError("vLLM server did not become ready")
+        raise RuntimeError("[START SERVER]vLLM server did not become ready")
 
     return proc
 
 
-
 def serve_then_bench(cfg: BenchmarkConfig, gpu_id: int = 7,
                      host: str = "127.0.0.1", port: int = 8000):
+    """
+    The entire engine of the system; serves the model on specified host and port and GPU and then benchmarks it
+    """
 
     server_proc = None
+    gpu_samples = []
+    stop_event = threading.Event()
+    sampler_thread = None
+
     try:
         server_proc = start_vllm_server(cfg, gpu_id, host, port)
+
+        # Start GPU sampling
+        sampler_thread = threading.Thread(
+            target=sample_gpu_stats,
+            args=(gpu_id, stop_event, gpu_samples),
+            daemon=True
+        )
+        sampler_thread.start()
 
         cmd = [
             "vllm", "bench", "serve",
@@ -225,7 +218,29 @@ def serve_then_bench(cfg: BenchmarkConfig, gpu_id: int = 7,
         proc = subprocess.run(cmd, capture_output=True, text=True)
         duration = time.time() - start
 
+        # Stop GPU sampler
+        stop_event.set()
+        sampler_thread.join()
+
         metrics = parse_metrics(proc.stdout, cfg.benchmark_type)
+
+        # Aggregate GPU stats
+        if gpu_samples:
+            avg_util = sum(s["gpu_util_percent"] for s in gpu_samples) / len(gpu_samples)
+            peak_util = max(s["gpu_util_percent"] for s in gpu_samples)
+
+            avg_mem = sum(s["mem_used_mb"] for s in gpu_samples) / len(gpu_samples)
+            peak_mem = max(s["mem_used_mb"] for s in gpu_samples)
+        else:
+            avg_util = peak_util = avg_mem = peak_mem = None
+
+        # Attach GPU stats to metrics
+        metrics.update({
+            "avg_gpu_util_percent": avg_util,
+            "peak_gpu_util_percent": peak_util,
+            "avg_gpu_mem_mb": avg_mem,
+            "peak_gpu_mem_mb": peak_mem,
+        })
 
         write_benchmark_log(
             cfg, duration, proc.returncode,
@@ -239,7 +254,6 @@ def serve_then_bench(cfg: BenchmarkConfig, gpu_id: int = 7,
             benchmark_mode="Online",
         )
 
-
         return {
             "config": cfg.model_dump(),
             "returncode": proc.returncode,
@@ -252,11 +266,12 @@ def serve_then_bench(cfg: BenchmarkConfig, gpu_id: int = 7,
     finally:
         if server_proc:
             write_server_log("[SERVE_THEN_BENCH] Terminating server")
-            write_server_log("[SERVE_THEN_BENCH] Benchmark Completed")
             server_proc.terminate()
-            write_server_log(f"="*80)
+            write_server_log("[SERVE_THEN_BENCH] Benchmark Completed")
+            write_server_log("=" * 80)
 
 
+#driver for testing the module
 def main():
     cfg = BenchmarkConfig(
         model_name="Qwen/Qwen2.5-3B-Instruct",
