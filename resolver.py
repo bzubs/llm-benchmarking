@@ -4,11 +4,7 @@ from transformers import AutoConfig
 from huggingface_hub import list_repo_files
 import torch
 
-
-# ==========================================
 # Data Model
-# ==========================================
-
 @dataclass
 class ModelCapabilities:
     max_model_len: int
@@ -18,15 +14,10 @@ class ModelCapabilities:
     default_quantization: str
 
 
-# ==========================================
 # Capability Resolver
-# ==========================================
-
 class CapabilityResolver:
 
-    # --------------------------------------
     # Public Entry Point
-    # --------------------------------------
     def resolve(self, model_name: str) -> ModelCapabilities:
         max_len = self._resolve_max_len(model_name)
 
@@ -50,9 +41,7 @@ class CapabilityResolver:
             default_quantization=default_quant,
         )
 
-    # --------------------------------------
     # MODEL METADATA (Context Length)
-    # --------------------------------------
     def _resolve_max_len(self, model_name: str) -> int:
         try:
             config = AutoConfig.from_pretrained(model_name)
@@ -60,9 +49,8 @@ class CapabilityResolver:
         except Exception:
             return 8192
 
-    # --------------------------------------
     # CHECKPOINT → QUANTIZATION LOGIC
-    # --------------------------------------
+
     def _resolve_quantization(self, model_name: str) -> List[str]:
         quant = []
         name_lower = model_name.lower()
@@ -91,9 +79,7 @@ class CapabilityResolver:
 
         return list(set(quant))
 
-    # --------------------------------------
     # GPU → DTYPE LOGIC
-    # --------------------------------------
     def _resolve_dtypes(self, quantizations: List[str]) -> List[str]:
 
         # If checkpoint is pre-quantized, dtype must be auto

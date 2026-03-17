@@ -13,7 +13,7 @@ class BenchmarkConfig(BaseModel):
     device: Literal["gpu7", "gpu6"] = "gpu7"
     
     model_name: str
-    dtype: Optional[Literal["auto", "float16", "float32", "bfloat16"]] = "fp16"
+    dtype: Optional[Literal["auto", "float16", "float32", "bfloat16", "fp16"]] = "fp16"
     max_model_len : Optional[int] = 256
     quantization: Literal["int8", "int4", "fp8", "gptq", "awq", "none"] = "none"
     # prompt
@@ -30,3 +30,6 @@ class BenchmarkConfig(BaseModel):
 
     #gpu_memory_util
     gpu_memory_util : Optional[float] = 0.85
+
+    host : str = "localhost"
+    port : str = "8023"
