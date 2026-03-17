@@ -1,0 +1,10 @@
+[2026-03-16 12:04:44] ================================================================================
+[2026-03-16 12:04:44] [START SERVER] Command: vllm serve gpt2 --host 127.0.0.1 --port 8023 --dtype auto --max-model-len 1024
+[2026-03-16 12:05:17] [START SERVER] Server ready
+[2026-03-16 12:05:17] [SERVE_THEN_BENCH] vllm bench serve --backend vllm --model gpt2 --endpoint /v1/completions --host 127.0.0.1 --port 8023 --num-prompts 10 --random-input-len 32 --random-output-len 32 --max-concurrency 1
+[2026-03-16 12:05:28] [SERVE_THEN_BENCH] Benchmark Completed
+[2026-03-16 12:05:28] [PARSE_METRICS] Parsing metrics for serve
+[2026-03-16 12:05:28] [PARSE_METRICS] Stdout length: 3594
+[2026-03-16 12:05:28] [PARSE_METRICS] Extracted 16 metrics
+[2026-03-16 12:05:28] [SERVE_THEN_BENCH] Terminating server
+[2026-03-16 12:26:13] ================================================================================

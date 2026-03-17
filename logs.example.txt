@@ -1,0 +1,80 @@
+================================================================================
+Timestamp: 2026-02-25 12:32:36
+Benchmark Mode: Online
+Benchmark Type: serve
+Model: gpt2
+GPU ID: gpu7
+Runtime: 10.86 seconds
+Return Code: 0
+
+Configuration:
+{
+  "benchmark_mode": "Online (Real-time Serving)",
+  "benchmark_type": "serve",
+  "username": "adi",
+  "device": "gpu7",
+  "model_name": "gpt2",
+  "dtype": "auto",
+  "max_model_len": 1024,
+  "quantization": "none",
+  "dataset_name": "random",
+  "input_len": 32,
+  "output_len": 32,
+  "dataset_path": null,
+  "num_prompts": 10,
+  "max_concurrency": 1,
+  "backend": "vllm",
+  "endpoint": "/v1/completions",
+  "gpu_memory_util": 0.85
+}
+
+Metrics (20 found):
+{
+  "successful_requests": 0,
+  "benchmark_duration_sec": 0.01,
+  "total_input_tokens": 0,
+  "total_generated_tokens": 0,
+  "request_throughput": 0.0,
+  "output_token_throughput": 0.0,
+  "total_token_throughput": 0.0,
+  "mean_ttft_ms": 0.0,
+  "median_ttft_ms": 0.0,
+  "p99_ttft_ms": 0.0,
+  "mean_tpot_ms": 0.0,
+  "median_tpot_ms": 0.0,
+  "p99_tpot_ms": 0.0,
+  "mean_itl_ms": 0.0,
+  "median_itl_ms": 0.0,
+  "p99_itl_ms": 0.0,
+  "avg_gpu_util_percent": 0.0,
+  "peak_gpu_util_percent": 0,
+  "avg_gpu_mem_mb": 74996.25,
+  "peak_gpu_mem_mb": 74996.25
+}
+
+Stderr Output (last 1000 chars):
+
+
+Stdout Output (last 1000 chars):
+     0         
+Total generated tokens:                  0         
+Request throughput (req/s):              0.00      
+Output token throughput (tok/s):         0.00      
+Peak output token throughput (tok/s):    0.00      
+Peak concurrent requests:                0.00      
+Total token throughput (tok/s):          0.00      
+---------------Time to First Token----------------
+Mean TTFT (ms):                          0.00      
+Median TTFT (ms):                        0.00      
+P99 TTFT (ms):                           0.00      
+-----Time per Output Token (excl. 1st token)------
+Mean TPOT (ms):                          0.00      
+Median TPOT (ms):                        0.00      
+P99 TPOT (ms):                           0.00      
+---------------Inter-token Latency----------------
+Mean ITL (ms):                           0.00      
+Median ITL (ms):                         0.00      
+P99 ITL (ms):                            0.00      
+==================================================
+
+================================================================================
