@@ -1,5 +1,4 @@
 import os
-from writer import write_server_log
 import streamlit as st
 from huggingface_hub import list_models
 from transformers import AutoTokenizer
@@ -17,7 +16,7 @@ def fetch_hf_models(limit: int = 200):
             direction=-1,
             limit=limit,
         )
-        return [m.modelId for m in models]
+        return [m.modelId for m in models] #type: ignore
     except Exception:
         return []
 
