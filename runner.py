@@ -7,7 +7,7 @@ from datetime import datetime
 from schema import BenchmarkConfig
 from cli_builder import env_for_gpu
 from writer import write_server_log, write_benchmark_log, append_jsonl_history
-from helper import detect_model_type
+#from helper import detect_model_type
 
 
 import urllib.request
@@ -34,8 +34,8 @@ def sample_gpu_stats(gpu_id: int, stop_event: threading.Event, samples: list):
 
             samples.append({
                 "gpu_util_percent": util.gpu,
-                "mem_used_mb": mem.used / 1024 / 1024,
-                "mem_total_mb": mem.total / 1024 / 1024
+                "mem_used_mb": float(mem.used) / 1024 / 1024,
+                "mem_total_mb": float(mem.total) / 1024 / 1024
             })
 
             time.sleep(0.2)
@@ -117,28 +117,22 @@ def wait_for_vllm_ready(host: str, port: int, timeout: int = 180) -> bool:
     start = time.time()
     url = f"http://{host}:{port}/v1/models"
 
-    write_server_log(f"[READY] Waiting for /v1/models (timeout={timeout}s)")
+    #write_server_log(f"[READY] Waiting for /v1/models (timeout={timeout}s)")
 
     while time.time() - start < timeout:
         try:
             with urllib.request.urlopen(url, timeout=3) as resp:
                 if resp.status == 200:
-                    write_server_log("[READY] vLLM server is ready")
+                    #write_server_log("[READY] vLLM server is ready")
                     return True
         except Exception:
             pass
         time.sleep(1)
 
-    write_server_log("[READY] Timeout waiting for vLLM readiness")
+    #write_server_log("[READY] Timeout waiting for vLLM readiness")
     return False
-
-
 def start_vllm_server(cfg: BenchmarkConfig, gpu_id: int = 7,
                       host: str = "127.0.0.1", port: int = 8000):
-
-    """
-    Starts vLLM server using the provided config at localhost and port 8000 on specified GPU
-    """
 
     cmd = [
         "vllm", "serve", cfg.model_name,
@@ -146,34 +140,63 @@ def start_vllm_server(cfg: BenchmarkConfig, gpu_id: int = 7,
         "--port", str(port),
         "--dtype", str(cfg.dtype),
         "--max-model-len", str(cfg.max_model_len),
-        
     ]
 
-    if cfg.quantization!= "none":
+    if cfg.quantization != "none":
         cmd += ["--quantization", str(cfg.quantization)]
 
-
     env = env_for_gpu(gpu_id)
-    write_server_log(f"="*80)
+
+    write_server_log("=" * 80)
     write_server_log(f"[START SERVER] Command: {' '.join(cmd)}")
 
     proc = subprocess.Popen(
         cmd,
         env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
+        stdout=subprocess.DEVNULL,   # ignore stdout
+        stderr=subprocess.PIPE,      # capture only stderr
         text=True,
     )
 
-    if not wait_for_vllm_ready(host, port):
-        proc.terminate()
-        raise RuntimeError("[START SERVER]vLLM server did not become ready")
+    start_time = time.time()
+    timeout = 120
 
-    return proc
+    while True:
 
+        # If process exited → get real error
+        if proc.poll() is not None:
+            _, stderr = proc.communicate()
+
+            # Extract the last meaningful exception line
+            root_error = None
+            for line in reversed(stderr.splitlines()):
+                line = line.strip()
+                if line.startswith(("ValueError:", "RuntimeError:", "OSError:", "Exception:")):
+                    root_error = line
+                    break
+
+            if not root_error:
+                # fallback to last 5 lines if nothing matched
+                root_error = "\n".join(stderr.splitlines()[-5:])
+            write_server_log(f"[START SERVER] Starting of vLLM server failed with returncode {proc.returncode}")
+            raise RuntimeError(
+                f"vLLM server failed (code {proc.returncode}):\n{root_error}"
+            )
+
+        # If ready → success
+        if wait_for_vllm_ready(host, port, timeout=2):
+            write_server_log("[START SERVER] Server ready")
+            return proc
+
+        # Timeout
+        if time.time() - start_time > timeout:
+            proc.terminate()
+            raise RuntimeError("vLLM server startup timed out.")
+
+        time.sleep(1)
 
 def serve_then_bench(cfg: BenchmarkConfig, gpu_id: int = 7,
-                     host: str = "127.0.0.1", port: int = 8000):
+                     host: str = "127.0.0.1", port: int = 8023):
     """
     The entire engine of the system; serves the model on specified host and port and GPU and then benchmarks it
     """
@@ -211,18 +234,36 @@ def serve_then_bench(cfg: BenchmarkConfig, gpu_id: int = 7,
             cmd += ["--random-output-len", str(cfg.output_len)]
         if cfg.max_concurrency:
             cmd += ["--max-concurrency", str(cfg.max_concurrency)]
-
+        
         write_server_log(f"[SERVE_THEN_BENCH] {' '.join(cmd)}")
 
         start = time.time()
-        proc = subprocess.run(cmd, capture_output=True, text=True)
+
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+
+        stdout, stderr = proc.communicate()
         duration = time.time() - start
 
-        # Stop GPU sampler
+        # Stop GPU sampler immediately after benchmark exits
         stop_event.set()
         sampler_thread.join()
 
-        metrics = parse_metrics(proc.stdout, cfg.benchmark_type)
+        if proc.returncode != 0:
+            write_server_log(f"[BENCH ERROR] Return code: {proc.returncode}")
+            write_server_log(stdout)
+            raise RuntimeError("Benchmark process failed")
+        else:
+            write_server_log("[SERVE_THEN_BENCH] Benchmark Completed")
+
+        # Parse metrics only if successful
+        metrics = parse_metrics(stdout, cfg.benchmark_type)
+
+    
 
         # Aggregate GPU stats
         if gpu_samples:
@@ -244,7 +285,7 @@ def serve_then_bench(cfg: BenchmarkConfig, gpu_id: int = 7,
 
         write_benchmark_log(
             cfg, duration, proc.returncode,
-            metrics, proc.stderr, proc.stdout,
+            metrics, stderr, stdout,
             benchmark_mode="Online",
         )
 
@@ -259,16 +300,18 @@ def serve_then_bench(cfg: BenchmarkConfig, gpu_id: int = 7,
             "returncode": proc.returncode,
             "runtime_sec": duration,
             "metrics": metrics,
-            "stderr": proc.stderr,
-            "stdout": proc.stdout,
+            "stderr": stderr,
+            "stdout": stdout
         }
+    except Exception as err:
+        raise RuntimeError(str(err))
 
     finally:
         if server_proc:
             write_server_log("[SERVE_THEN_BENCH] Terminating server")
             server_proc.terminate()
-            write_server_log("[SERVE_THEN_BENCH] Benchmark Completed")
-            write_server_log("=" * 80)
+            
+         
 
 
 #driver for testing the module
@@ -282,16 +325,10 @@ def main():
         max_concurrency=5
     )
 
-    model_type = detect_model_type(cfg.model_name)
-
-    if model_type == "chat":
-        cfg.dataset_name = "sharegpt"
-        cfg.dataset_path = "ShareGPT_V3_unfiltered_cleaned_split.json"
-        cfg.endpoint = "/v1/chat/completions"
-    else:
-        cfg.dataset_name = "random"
-        cfg.dataset_path = None
-        cfg.endpoint = "/v1/completions"
+    
+    cfg.dataset_name = "random"
+    cfg.dataset_path = None
+    cfg.endpoint = "/v1/completions"
 
     serve_then_bench(cfg)
 

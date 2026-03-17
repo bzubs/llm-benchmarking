@@ -1,6 +1,3 @@
-###ALTERNATIVE CODE FOR RUNNER.PY with different loggin structure
-
-
 import subprocess
 import time
 import json
@@ -38,8 +35,8 @@ def sample_gpu_stats(gpu_id: int, stop_event: threading.Event, samples: list):
 
             samples.append({
                 "gpu_util_percent": util.gpu,
-                "mem_used_mb": mem.used / 1024 / 1024,
-                "mem_total_mb": mem.total / 1024 / 1024
+                "mem_used_mb": float(mem.used) / 1024 / 1024,
+                "mem_total_mb": float(mem.total) / 1024 / 1024
             })
 
             time.sleep(0.2)
@@ -118,8 +115,6 @@ def check_metrics_parsing_error(metrics: dict,
         return True, "No metrics were parsed from benchmark output."
 
     return False, ""
-
-
 
 # ========================= READINESS CHECK =========================
 
