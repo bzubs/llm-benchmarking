@@ -13,6 +13,7 @@ from schema import BenchmarkConfig
 from runner import serve_then_bench
 from configs import MODEL_CONFIGS, PRESET_CONFIGS
 from login import show_auth_screen
+from typing import cast, Literal
 
 #CONFIG FOR FILES
 log_file = "server.log"
@@ -166,7 +167,7 @@ with benchmark_tab:
                         display:flex; align-items:center; justify-content:center;
                         font-size:10px; font-weight:700; color:white; flex-shrink:0;
                     ">
-                        {st.session_state.username[0].upper()}
+                        {str(st.session_state.username)[0].upper()}
                     </div>
                     <div style="font-size:11px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
                         {st.session_state.username}
@@ -438,9 +439,9 @@ with benchmark_tab:
                 cfg = BenchmarkConfig(
                     #benchmark_mode=benchmark_mode,
                     #benchmark_type=config_benchmark_type,
-                    username= st.session_state.username,
+                    username= str(st.session_state.username),
                     model_name=model_name,
-                    dtype=dtype,
+                    dtype=cast(Literal["auto", "float16", "float32", "bfloat16", "fp16"]), dtype),
                     max_model_len=max_model_len,
                     input_len=input_len,
                     output_len=output_len,
