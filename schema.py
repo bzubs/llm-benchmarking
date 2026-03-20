@@ -1,19 +1,17 @@
-from pydantic import BaseModel
-from typing import Optional, Literal
+from pydantic import BaseModel, Field
+from typing import Optional, Literal, List
 
 
 class BenchmarkConfig(BaseModel):
-    # mode
+    # mode and type both deprecated in v2
     benchmark_mode: str = "Online (Real-time Serving)"
-    benchmark_type: Literal["latency", "throughput", "serve"] = "serve"
+    benchmark_type: Literal["serve"] = "serve"
+    
     #user
-    username : str = "None"
-
-    # device
-    device: Literal["gpu7", "gpu6"] = "gpu7"
+    username : str = "none"
     
     model_name: str
-    dtype: Optional[Literal["auto", "float16", "float32", "bfloat16", "fp16"]] = "fp16"
+    dtype: Literal["auto", "fp16", "fp32", "bfloat16"] = "fp16"
     max_model_len : Optional[int] = 256
     quantization: Literal["int8", "int4", "fp8", "gptq", "awq", "none"] = "none"
     # prompt
@@ -33,3 +31,22 @@ class BenchmarkConfig(BaseModel):
 
     host : str = "localhost"
     port : str = "8023"
+
+
+class GPU(BaseModel):
+    id: int
+    status : Literal["busy", "free"]
+
+
+
+class BenchTask(BaseModel):
+    id : int
+    config : BenchmarkConfig
+    status : Literal["init", "assigned", "running", "completed", "queued", "failed"]= "init"
+    gpu_assigned : Optional[int] = None
+
+
+
+class GPUNode(BaseModel):
+    gpu: GPU
+    queue: List[BenchTask] = Field(default_factory=list)
