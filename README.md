@@ -1,298 +1,214 @@
-vLLM Benchmarking Platform
+#vLLM Benchmarking Platform
+
+![Python](https://img.shields.io/badge/Python-3.10+-blue)
+![FastAPI](https://img.shields.io/badge/FastAPI-Backend-green)
+![Streamlit](https://img.shields.io/badge/Streamlit-Frontend-red)
+![GPU](https://img.shields.io/badge/GPU-Aware-orange)
+![License](https://img.shields.io/badge/License-MIT-yellow)
+
+---
+
+## Overview
+A GPU-aware LLM benchmarking orchestration platform built on top of vLLM, designed for **real-world system behavior**, **concurrent execution**, and **clean architecture design**.
 
-A configurable, multi-user benchmarking system for Large Language Models (LLMs) built on top of the vLLM framework.
+---
+
+## Core Capabilities
+- Remote benchmark job submission
+- GPU-aware scheduling
+- Concurrent execution across GPUs
+- Real-time monitoring & logs
+- Structured metrics extraction
+- Per-user history tracking
+
+---
 
-This platform abstracts complex CLI workflows into a structured, UI-driven Streamlit interface while preserving full configurability and reproducibility.
+## Architecture
 
-Objective
+### High-Level Components
+```
+User (Streamlit UI)
+        ↓
+FastAPI Backend (Control Plane)
+        ↓
+GPU Scheduler
+        ↓
+GPU Cluster Manager
+        ↓
+Execution Engine (Threads)
+        ↓
+vLLM Serve + Benchmark
+        ↓
+Logs + Metrics Storage
+```
 
-The vLLM Benchmarking Platform provides a structured environment to:
+---
 
-Serve LLMs using vLLM
+##  Workflow
+1. User submits config via UI  
+2. Backend validates request  
+3. Task added to queue  
+4. Scheduler assigns GPU  
+5. Executor runs benchmark  
+6. Logs + metrics collected  
+7. UI polls for results  
 
-Benchmark model performance
+---
 
-Monitor GPU utilization
+## Design Decisions (DETAILED)
+
+### 1. Layered Architecture
+Clear separation of concerns:
+- **Control Plane** → API + lifecycle management
+- **Scheduler Layer** → GPU allocation
+- **Resource Layer** → GPU abstraction
+- **Execution Layer** → actual workload execution
+- **Presentation Layer** → UI
 
-Log execution results
+Enables modularity, easier debugging, and extensibility.
 
-Track historical runs
+---
+
+### 2. Thread-Based Execution Model
+- Each task runs in a separate thread
+- Each GPU is treated as an isolated execution unit
 
-Support authenticated multi-user access
+Why?
+- Lightweight concurrency
+- Simpler than distributed systems
+- Good fit for single-node GPU workloads
+
+---
+
+### 3. GPU as First-Class Resource
+- GPUs abstracted via `cluster.py`
+- Explicit allocation & release model
+
+Why?
+- Prevents resource conflicts
+- Enables future multi-GPU scheduling
+
+---
+
+### 4. CLI-Driven Execution (vLLM)
+- Uses actual `vllm serve` and `vllm bench`
 
-It converts raw CLI workflows into a clean, production-ready benchmarking interface.
+Why?
+- No reimplementation of benchmarking logic
+- Ensures accuracy & compatibility
+
+---
+
+### 5. Pull-Based Monitoring (Polling)
+- UI polls backend instead of push updates
 
-Background
+Why?
+- Simpler implementation
+- Avoids WebSocket complexity
 
-The official vLLM framework provides a benchmarking CLI that requires two sequential commands:
+---
+
+### 6. Structured Logging Strategy
+- Separate logs for:
+  - Runtime logs
+  - Summary logs
+  - Historical JSON
 
-Step 1 – Serve Model
-vllm serve gpt2 \
-  --host 127.0.0.1 \
-  --port 8000 \
-  --dtype auto \
-  --max-model-len 1024
-Step 2 – Benchmark Model
-vllm bench serve \
-  --backend vllm \
-  --model gpt2 \
-  --endpoint /v1/completions \
-  --host 127.0.0.1 \
-  --port 8000 \
-  --num-prompts 10 \
-  --random-input-len 32 \
-  --random-output-len 32 \
-  --max-concurrency 1
+Why?
+- Debuggability
+- Observability
+- Reproducibility
 
-The benchmarking CLI prints performance metrics to STDOUT, which this platform parses and structures automatically.
+---
 
-Tunable Parameters
-Serving Parameters (6)
+### 7. In-Memory Task Registry
+- Fast access to task state
 
-Model name
+Trade-off:
+- Faster operations
+- But not persistent (intentional simplification)
 
-Data type (float16 / float32 / bfloat16 / auto)
+---
 
-Quantization (if supported)
+## Concurrency Model
 
-Maximum GPU utilization (default: 85%)
+- One task per GPU
+- Tasks queued when GPUs are busy
+- Executor uses threads
 
-GPU ID
+### Benefits
+- Parallel GPU utilization
+- Task isolation
+- Simple synchronization
 
-Maximum model length (auto-fetched)
+### Limitations
+- Single-node only
+- Not horizontally scalable
 
-Benchmarking Parameters (4)
+---
 
-Input Length – Prompt token length (default: 32)
+## Project Structure
+```
+app.py          → Frontend
+backend.py      → API server
+scheduler.py    → Scheduling logic
+cluster.py      → GPU manager
+executor.py     → Execution engine
+runner.py       → Benchmark runner
+schema.py       → Data models
+writer.py       → Logging
+resolver.py     → Config validation
+```
 
-Output Length – Generated token length (default: 32)
+---
 
-Maximum Concurrency – Parallel requests
+## API
 
-Number of Prompts – Total benchmark requests
+| Endpoint | Method | Description |
+|----------|--------|------------|
+| /submit | POST | Submit benchmark |
+| /status/{id} | GET | Get task status |
 
-System Architecture
-High-Level Design
+---
 
-Frontend: Streamlit
+## Metrics Collected
+- Throughput (req/sec)
+- Token throughput
+- TTFT
+- TPOT
+- Latency metrics
+- GPU utilization
+- Memory usage
 
-Backend: Modular Python services
+---
 
-Database: SQLite (file-based)
+## Setup
 
-Serving & Benchmarking: vLLM
+```bash
+pip install -r requirements.txt
+python main.py
+streamlit run app.py
+```
 
-Workflow
+---
 
-User configures benchmark in UI
+## Known Limitations
+- Single-node system
+- No retry mechanism
+- No priority scheduling
+- In-memory storage
+- No utilization-aware scheduling
 
-Config validated via Pydantic schema
+---
 
-CLI command dynamically constructed
+## Future Improvements
+- Distributed GPU scheduling
+- Redis/Kafka queue
+- WebSocket live logs
+- Auto-scaling workers
+- Smarter scheduling
 
-vLLM server launched
+---
 
-Benchmark executed
-
-Metrics parsed from STDOUT
-
-Logs persisted
-
-Results displayed in UI
-
-Project Structure
-app.py                → Streamlit frontend
-cli_builder.py        → CLI command builder
-runner.py             → Execution engine & output parser
-schema.py             → Pydantic benchmark config model
-auth.py               → Authentication logic
-login.py              → Login UI
-resolver.py           → Model parameter validation
-helper.py             → Hugging Face utilities
-writer.py             → Logging & history writers
-db_setup.py           → SQLite initialization
-configs.py            → Pre-configured model definitions
-
-Module Responsibilities
-schema.py
-
-Defines BenchmarkConfig (Pydantic model)
-
-Validates input
-
-Ensures configuration consistency
-
-runner.py
-
-Core execution engine.
-
-Key Functions:
-
-serve_then_bench() → Full workflow orchestration
-
-start_vllm_server() → Launch serve command
-
-wait_for_vllm_ready() → Poll /v1/models endpoint
-
-parse_metrics() → Extract metrics via regex
-
-cli_builder.py
-
-build_cli() → Constructs serve/bench commands
-
-env_for_gpu() → Sets CUDA_VISIBLE_DEVICES
-
-resolver.py
-
-_resolve_max_len()
-
-_resolve_quantization()
-
-_resolve_dtype()
-
-Validates user-selected model parameters.
-
-helper.py
-
-fetch_hf_models() → Retrieves models from Hugging Face
-
-auth.py
-
-register_user() → Hashes passwords using bcrypt
-
-login_user() → Validates credentials
-
-writer.py
-
-Handles persistent logging:
-
-write_benchmark_log()
-
-write_server_log()
-
-append_history_jsonl()
-
-Logging System
-server.log
-
-Live execution logs during benchmarking.
-
-logs.txt
-
-Full benchmark record:
-
-Config
-
-Metrics
-
-STDOUT
-
-STDERR
-
-run_history.jsonl
-
-Structured JSON record including:
-
-Username
-
-Configuration
-
-Metrics
-
-Timestamp
-
-🔧 Setup & Configuration
-1️⃣ Install Requirements
-
-requirements.txt
-
-streamlit>=1.28.0
-vllm
-transformers
-pydantic>=2.0.0
-pynvml
-torch
-huggingface-hub
-bcrypt
-python-dotenv
-2️⃣ Environment Variables
-
-Create a .env file:
-
-access_code=yoursecretcode
-3️⃣ Initialize Database
-
-Run once:
-
-python3 db_setup.py
-
-This creates the SQLite users table.
-
-🛠 Development Phases
-Phase 0 – Foundation
-
-Initial UI
-
-CLI integration
-
-Serve + benchmark orchestration
-
-Phase 1 – Observability
-
-CSV / JSON export
-
-Auto-fetch models
-
-Live logs
-
-Progress bar
-
-Phase 2 – Validation
-
-Parameter validation
-
-GPU metrics tab
-
-History tab
-
-Stable log streaming
-
-Phase 3 – Multi-User
-
-Authentication system
-
-Access-code onboarding
-
-SQLite storage
-
-Per-user benchmark history
-
-Documentation
-
-Final Capabilities
-
-The platform now supports:
-
-Reproducible benchmarking (controlled GPU usage)
-
-Structured logging
-
-GPU observability
-
-User-level isolation
-
-Persistent benchmark history
-
-Modular and extensible architecture
-
-Future Improvements (Optional Ideas)
-
-Dockerized deployment
-
-Remote cluster benchmarking
-
-Multi-node distributed benchmarking
-
-Real-time dashboarding
-
-Role-based access control
+## License
+MIT
