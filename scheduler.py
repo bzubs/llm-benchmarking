@@ -38,15 +38,3 @@ class GPUScheduler:
 
         self.cluster.append_task(node.gpu.id, task)
 
-
-def main():
-    cluster = GPUCluster(4)
-    scheduler = GPUScheduler(cluster)
-
-    tasks = [create_task(i) for i in range(10)]
-
-    for task in tasks:
-        scheduler.schedule_task(task)
-        print(f"Task {task.id} -> GPU {task.gpu_assigned} | status={task.status}")
-
-    print_cluster(cluster)

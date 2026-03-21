@@ -18,7 +18,6 @@ def create_task(task_id: int) -> BenchTask:
     )
 
     cfg.dataset_name = "random"
-    cfg.dataset_path = None
     cfg.endpoint = "/v1/completions"
 
     return BenchTask(id=task_id, config=cfg)
