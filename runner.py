@@ -29,8 +29,8 @@ def sample_gpu_stats(task_id: int, gpu_id: int, stop_event: threading.Event, sam
 
             samples.append({
                 "gpu_util_percent": util.gpu,
-                "mem_used_mb": mem.used / 1024 / 1024,
-                "mem_total_mb": mem.total / 1024 / 1024
+                "mem_used_mb": int(mem.used) / 1024 / 1024,
+                "mem_total_mb": int(mem.total) / 1024 / 1024
             })
 
             time.sleep(0.2)
@@ -155,6 +155,7 @@ def serve_then_bench(task: BenchTask, port: int, host: str = "127.0.0.1"):
     gpu_id = task.gpu_assigned
     task_id = task.id
 
+
     server_proc = None
     gpu_samples = []
     stop_event = threading.Event()
@@ -206,11 +207,14 @@ def serve_then_bench(task: BenchTask, port: int, host: str = "127.0.0.1"):
 
         if proc.returncode != 0:
             write_task_log(task_id, f"[BENCH ERROR] {proc.returncode}")
+            task.status = "failed"
             raise RuntimeError("Benchmark failed")
 
         write_task_log(task_id, "[BENCH DONE]")
 
         metrics = parse_metrics(task_id, stdout)
+
+        task.status = "completed"
 
         if gpu_samples:
             metrics.update({
