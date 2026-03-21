@@ -7,18 +7,21 @@ import threading
 import time
 from datetime import datetime
 from contextlib import redirect_stdout
-from helper import tail_file, read_new_logs, fetch_hf_models, detect_model_type
+from helper import fetch_hf_models, detect_model_type
 from resolver import CapabilityResolver
 from schema import BenchmarkConfig
-from runner import serve_then_bench
+from cli_builder import build_cli
 from configs import MODEL_CONFIGS, PRESET_CONFIGS
 from login import show_auth_screen
 from typing import cast, Literal
+import requests
 
 #CONFIG FOR FILES
-log_file = "server.log"
 history_file = "runs_history.jsonl"
 
+#CONFIG FOR BACKEND
+
+BACKEND_URL = "http://127.0.0.1:8000"
 
 st.set_page_config(page_title="vLLM Benchmark", layout="wide")
 
@@ -261,11 +264,12 @@ with benchmark_tab:
         )
 
     with col2:
-        gpu_id = st.number_input(
-            "GPU ID",
-            value=7,
-            min_value=0,
-            help="GPU device ID to use"
+        n_gpus_required = st.number_input(
+            "Number of GPUs",
+            value=1,
+            min_value=1,
+            max_value =8,
+            help="Number of GPUs to Run Benchmark on"
         )
 
     # Auto-set max_model_len based on detection
@@ -372,7 +376,7 @@ with benchmark_tab:
         with c1:
             st.metric("Model", model_name.split("/")[-1])
         with c2:
-            st.metric("GPU ID", gpu_id)
+            st.metric("Reguired Number of GPUs", n_gpus_required)
         
         # Dataset Config
         c1, c2 = st.columns(2)
@@ -421,17 +425,15 @@ with benchmark_tab:
             st.error(" A benchmark is already running. Please wait for it to complete.")
         else:
             st.session_state.benchmark_running = True
-            
-            # Create a placeholder for status messages that will be replaced
-            status_placeholder = st.empty()
-            status_placeholder.info("Benchmarking Started... This may take several minutes. Refer progress bar below")
-            
+                    
+
             # Create tabs for results display
-            tab1, tab2, tab3, tab4 = st.tabs([
+            tab1, tab2, tab3, tab4, tab5 = st.tabs([
                 "Results", 
                 "Configuration", 
                 "Stdout", 
                 "Debug",
+                "Logs"
             ])
             
             try:
@@ -441,141 +443,104 @@ with benchmark_tab:
                     #benchmark_type=config_benchmark_type,
                     username= str(st.session_state.username),
                     model_name=model_name,
-                    dtype=cast(Literal["auto", "float16", "float32", "bfloat16", "fp16"]), dtype),
+                    dtype=dtype,
                     max_model_len=max_model_len,
                     input_len=input_len,
                     output_len=output_len,
                     num_prompts=num_prompts,
                     gpu_memory_util=gpu_memory_util,
+                    n_gpus_required = n_gpus_required,
                     quantization=quantization,
                     max_concurrency=num_concurrency,
                     dataset_name= dataset_name,
                     dataset_path= dataset_path,
                     endpoint = endpoint
-
                 )
-            
-                # --- Progress UI ---
+
+                # Submit to backend
+                resp = requests.post(f"{BACKEND_URL}/submit",json=cfg.model_dump())
+
+                #st.write("POST status:", resp.status_code)
+                #st.write("POST response:", resp.text)
+
+
+                if resp.status_code != 200:
+                    raise Exception(f"Submit failed: {resp.text}")
+
+                data = resp.json()
+
+                task_id = data["id"]
+                status = data["status"]
+
+                status_holder = st.info(f"Your Benchmarking Task has been acknowledged. Task ID is {task_id}. It has been has been scheduled to GPU ID : {data["gpu_assigned"]}")
+
                 progress_bar = st.progress(0)
                 progress_text = st.empty()
-                live_log_placeholder = st.empty()
-                log_buffer = ""
-
-
-                result_container = {}
-
-                def run_benchmark():
-                    result_container["result"] = serve_then_bench(
-                        cfg, gpu_id=gpu_id, host="127.0.0.1", port=8000
-                    )
-
-                # Capture starting file position ONCE
-                cursor = os.path.getsize(log_file) if os.path.exists(log_file) else 0
-
-                thread = threading.Thread(target=run_benchmark)
-                thread.start()
 
                 progress_value = 0.0
-                target_progress = 0.0
-                current_stage = "Initializing..."
+                result = {}
 
-                while thread.is_alive():
+                start_time = time.time()
+                TIMEOUT = 300  # 10 min
+
+
+                while True:
+                    if time.time() - start_time > TIMEOUT:
+                        progress_text.error("Timeout exceeded for polling. No response from backend")
+                        break
                     try:
-                        logs, cursor = read_new_logs(log_file, cursor)
+                        res = requests.get(f"{BACKEND_URL}/status/{task_id}", timeout=2)
 
-                        if logs:
-                            log_buffer += logs
-                            live_log_placeholder.code(log_buffer[-5000:], language="text")
+                        if res.status_code != 200:
+                            progress_text.error("Failed to fetch status")
+                            break
 
-                        
-                        # Stage Detection
-                        if "[START SERVER]" in logs:
-                            target_progress = max(target_progress, 0.15)
-                            current_stage = "Starting vLLM server..."
+                        data = res.json()
+                        status = data["status"]
 
-                        if "vLLM server is ready" in logs:
-                            target_progress = max(target_progress, 0.35)
-                            current_stage = "Server ready. Preparing benchmark..."
+                        # ---- STATUS HANDLING ----
+                        if status == "queued":
+                            progress_text.info(f"Your task has been queued for GPU ID: {data["gpu_assigned"]}")
+                            progress_value = min(progress_value + 0.02, 0.2)
 
-                        if "[SERVE_THEN_BENCH]" in logs:
-                            target_progress = max(target_progress, 0.65)
-                            current_stage = "Running benchmark..."
+                        elif status == "assigned":
+                            progress_text.info(f"Your task has been assigned to GPU ID: {data["gpu_assigned"]}")
+                            progress_value = max(progress_value, 0.3)
 
-                        if "[PARSE_METRICS]" in logs:
-                            target_progress = max(target_progress, 0.85)
-                            current_stage = "Parsing metrics..."
+                        elif status == "running":
+                            progress_text.info("Running benchmark...")
+                            progress_value = min(progress_value + 0.05, 0.9)
 
-                        if "Terminating server" in logs:
-                            target_progress = 1.0
-                            current_stage = "Finalizing..."
+                        elif status == "completed":
+                            progress_bar.progress(1.0)
+                            progress_text.success("Benchmark Completed!")
 
-                     
-                        if (
-                            current_stage == "Running benchmark..."
-                            and progress_value < 0.65
-                            and target_progress < 0.65
-                        ):
-                            progress_value += 0.005  # micro movement
-                            progress_value = min(progress_value, 0.64)
+                            result = data.get("result", {})
+                            break
 
-                       
-                        if progress_value < target_progress:
-                            progress_value += (target_progress - progress_value) * 0.12
-                            progress_value = min(progress_value, target_progress)
+                        elif status == "failed":
+                            progress_text.error("Failed")
+                            result = data.get("result", {})
+                            break
 
                         progress_bar.progress(progress_value)
-                        progress_text.info(
-                            f"{current_stage} ({int(progress_value * 100)}%)"
-                        )
-
-                        if not thread.is_alive() and target_progress < 1.0:
-                            progress_text.error("Not Completed")
-                            current_stage = "Benchmark finished"
-                            target_progress = 1.0
-
 
                     except Exception as e:
-                        progress_text.error(f"Progress error: {str(e)}")
+                        progress_text.error(f"Polling error: {str(e)}")
                         break
 
-                    time.sleep(0.2)
+                    time.sleep(2)
 
-                thread.join()
-
-                try:
-                    logs, cursor = read_new_logs(log_file, cursor)
-                    if logs:
-                        log_buffer += logs
-                        live_log_placeholder.code(log_buffer[-5000:], language="text")
-                except Exception:
-                    pass
-
-                result = result_container.get("result", {})
-
-                progress_bar.progress(1.0)
-                progress_bar.empty()
-                progress_text.empty()
-
-                # Check for errors
-                if result.get("error"):
-                    error_msg = result.get("error", "Unknown error")
-                    status_placeholder.error(f"Benchmark failed: {error_msg}")
-
-                elif result.get("returncode") != 0:
-                    status_placeholder.error(
-                        f"""Benchmark failed with return code {result.get('returncode')}.
-                        Error: {result.get('stderr', 'Check logs.txt for details.')}"""
-                        )
-
-                else:
-                    status_placeholder.success("Benchmark completed successfully!")
-                # Display results in tabs (accessible for all branches)
+                
+            
+                status_holder.empty()
                 with tab1:
                     if result.get("returncode") != 0:
                         st.error("Benchmark failed. Check other tabs for details.")
                     else:
                         st.subheader("Benchmark Metrics")
-                        metrics = result.get("metrics", {})
+                        metrics = result.get("metrics") or {}
+
                         
                         if metrics:
                             # Display metrics in a more organized way
@@ -660,20 +625,29 @@ with benchmark_tab:
                 
                 with tab2:
                     st.subheader("Benchmark Configuration")
-                    config = result.get("config", {})
+                    config = result.get("config") or {}
                     st.json(config)
                 
                 with tab3:
                     st.subheader("Raw Stdout Output")
-                    stdout = result.get("stdout", "")
-                    if stdout:
-                        st.code(stdout[-3000:], language="text")
+
+                    task_id = data.get("id") 
+
+                    log_path = f"summary/{task_id}_summary.log"
+
+                    if os.path.exists(log_path):
+                        with open(log_path, "r") as f:
+                            stdout = f.read()
+
+                        if stdout:
+                            st.code(stdout[-3000:], language="text")
+                        else:
+                            st.write("STDOUT file is empty")
                     else:
-                        st.write("No stdout captured")
+                        st.write("No STDOUT file found for this task")
                 
                 with tab4:
                     st.subheader("Debug Information")
-                    metrics = result.get("metrics", {})
                     st.write(f"**Metrics Found**: {len(metrics)}")
                     st.write(f"**Metrics Keys**: {list(metrics.keys())}")
                     st.write("**Full Metrics Dictionary**:")
@@ -681,9 +655,25 @@ with benchmark_tab:
                     
                     st.divider()
                     st.write("**Command Executed**:")
-                    from cli_builder import build_cli
                     cmd = build_cli(cfg)
                     st.code(" ".join(cmd), language="bash")
+
+                with tab5:
+                    st.subheader("Process Logs")
+                    task_id = data.get("id") 
+
+                    log_path = f"logs/task_{task_id}.log"
+
+                    if os.path.exists(log_path):
+                        with open(log_path, "r") as f:
+                            stdout = f.read()
+
+                        if stdout:
+                            st.code(stdout[-3000:], language="text")
+                        else:
+                            st.write("Process Log file is empty")
+                    else:
+                        st.write("No Process log file found for this task")
                                         
                 
                 # Export results button
@@ -742,15 +732,28 @@ with history_tab:
     st.header("Benchmark Run History")
     st.caption(f"Showing runs for user: {st.session_state.username}")
 
-
     if not os.path.exists(history_file):
         st.info("No benchmark history found yet.")
         st.stop()
 
     try:
         df = pd.read_json(history_file, lines=True)
+
+        # Normalize column names
+        rename_map = {
+            "taskID": "task_id",
+            "task_status": "status",
+            "return_code": "returncode"
+        }
+        df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
+
+        # Username filter (include nulls if needed)
         if "username" in df.columns:
-            df = df[df["username"] == st.session_state.username]
+            df = df[
+                (df["username"] == st.session_state.username) |
+                (df["username"].isna())
+            ]
+
     except Exception as e:
         st.error(f"Failed to read history file: {str(e)}")
         st.stop()
@@ -767,9 +770,10 @@ with history_tab:
     # Convert timestamp safely
     if "timestamp" in df.columns:
         df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+        df = df[df["timestamp"].notna()]
 
     # Sort latest first
-    df = df.sort_values("timestamp", ascending=False)
+    df = df.sort_values("timestamp", ascending=False, na_position="last")
 
     st.success(f"Total Runs Recorded: {len(df)}")
 
@@ -792,7 +796,6 @@ with history_tab:
             index=0
         )
 
-    # Throughput filter
     with col2:
         min_throughput = st.number_input(
             "Min Throughput (req/sec)",
@@ -803,7 +806,6 @@ with history_tab:
 
     col3, col4 = st.columns(2)
 
-    # Date filter
     with col3:
         if "timestamp" in df.columns:
             date_range = st.date_input(
@@ -816,14 +818,15 @@ with history_tab:
         else:
             date_range = None
 
-    # GPU Util filter
     with col4:
         gpu_threshold = st.slider(
             "Min Avg GPU Utilization (%)",
             0, 100, 0
         )
 
+    # ------------------------
     # Apply Filters
+    # ------------------------
     filtered_df = df.copy()
 
     # Model filter
@@ -832,10 +835,16 @@ with history_tab:
             filtered_df["model"] == selected_model
         ]
 
-    # Throughput filter
-    if "throughput" in filtered_df.columns:
+    # Throughput filter (FIXED)
+    throughput_col = None
+    if "request_throughput" in filtered_df.columns:
+        throughput_col = "request_throughput"
+    elif "total_token_throughput" in filtered_df.columns:
+        throughput_col = "total_token_throughput"
+
+    if throughput_col:
         filtered_df = filtered_df[
-            filtered_df["throughput"].fillna(0) >= min_throughput
+            filtered_df[throughput_col].fillna(0) >= min_throughput
         ]
 
     # GPU Util filter
@@ -845,18 +854,18 @@ with history_tab:
         ]
 
     # Date filter
-    if date_range and isinstance(date_range, tuple):
+    if date_range and isinstance(date_range, tuple) and "timestamp" in filtered_df.columns:
         start_date, end_date = date_range
-        if "timestamp" in filtered_df.columns:
-            filtered_df = filtered_df[
-                (filtered_df["timestamp"].dt.date >= start_date) &
-                (filtered_df["timestamp"].dt.date <= end_date)
-            ]
+        filtered_df = filtered_df[
+            (filtered_df["timestamp"].dt.date >= start_date) &
+            (filtered_df["timestamp"].dt.date <= end_date)
+        ]
 
     st.divider()
 
-    
+    # ------------------------
     # Display Results
+    # ------------------------
     st.write(f"### Showing {len(filtered_df)} runs")
 
     st.dataframe(
@@ -867,7 +876,9 @@ with history_tab:
 
     st.divider()
 
-    # Clear History Button
+    # ------------------------
+    # Clear History
+    # ------------------------
     if st.button("🗑️ Clear History"):
         open(history_file, "w").close()
         st.success("History cleared.")
