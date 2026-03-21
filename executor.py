@@ -1,6 +1,7 @@
 import threading
 import time
 from runner import serve_then_bench
+from schema import BenchResult
 
 class TaskExecutor:
     def __init__(self, cluster):
@@ -33,7 +34,7 @@ class TaskExecutor:
 
     def run_task(self, node, task):
         gpu_id = node.gpu.id
-        port = 8000 + gpu_id  #unique port per GPU
+        port = 8000 + gpu_id  # unique port per GPU
 
         print(f"[EXECUTOR] Running Task {task.id} on GPU {gpu_id}")
 
@@ -42,6 +43,8 @@ class TaskExecutor:
 
             if result["returncode"] == 0:
                 print(f"[EXECUTOR] Completed Task {task.id}")
+                result = BenchResult(**result)
+                task.result = result
                 task.status = "completed"
 
             else:
@@ -51,6 +54,12 @@ class TaskExecutor:
         except Exception as e:
             print(f"[EXECUTOR] Error Task {task.id}: {e}")
             task.status = "failed"
+            task.result = BenchResult(
+                config=task.config.model_dump(),
+                returncode=-1,
+                runtime_sec=0,
+                metrics={"error": str(e)}
+            )
 
         # CRITICAL SECTION
         self.cluster.pop_task(gpu_id, task)
@@ -60,3 +69,5 @@ class TaskExecutor:
             next_task.status = "assigned"
         else:
             node.gpu.status = "free"
+
+        

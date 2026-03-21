@@ -41,5 +41,3 @@ class GPUCluster:
     # --- Pythonic iteration support ---
     def __iter__(self):
         return iter(self._nodes.values())
-
-
