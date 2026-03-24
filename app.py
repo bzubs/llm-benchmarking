@@ -2,8 +2,6 @@ import streamlit as st
 import json
 import pandas as pd
 import os
-import io
-import threading
 import time
 from datetime import datetime
 from contextlib import redirect_stdout
@@ -14,14 +12,20 @@ from cli_builder import build_cli
 from configs import MODEL_CONFIGS, PRESET_CONFIGS
 from login import show_auth_screen
 from typing import cast, Literal
+from dotenv import load_dotenv
 import requests
 
+load_dotenv()
+
+
+
 #CONFIG FOR FILES
-history_file = "runs_history.jsonl"
+history_file = os.getenv("HISTORY_FILE", "runs_history.jsonl")
 
 #CONFIG FOR BACKEND
 
-BACKEND_URL = "http://127.0.0.1:8000"
+backend_port = os.getenv("BACKEND_PORT")
+BACKEND_URL = f"http://127.0.0.1:{backend_port}"
 
 st.set_page_config(page_title="vLLM Benchmark", layout="wide")
 
@@ -514,13 +518,12 @@ with benchmark_tab:
                         elif status == "completed":
                             progress_bar.progress(1.0)
                             progress_text.success("Benchmark Completed!")
-
-                            result = data.get("result", {})
+                            result = data.get("result") or {}
                             break
 
                         elif status == "failed":
                             progress_text.error("Failed")
-                            result = data.get("result", {})
+                            result = data.get("result") or {}
                             break
 
                         progress_bar.progress(progress_value)
@@ -534,8 +537,9 @@ with benchmark_tab:
                 
             
                 status_holder.empty()
+                metrics = result.get("metrics") or {}
                 with tab1:
-                    if result.get("returncode") != 0:
+                    if not result or result['returncode'] != 0:
                         st.error("Benchmark failed. Check other tabs for details.")
                     else:
                         st.subheader("Benchmark Metrics")
@@ -655,7 +659,7 @@ with benchmark_tab:
                     
                     st.divider()
                     st.write("**Command Executed**:")
-                    cmd = build_cli(cfg)
+                    cmd = build_cli(result.config)
                     st.code(" ".join(cmd), language="bash")
 
                 with tab5:
