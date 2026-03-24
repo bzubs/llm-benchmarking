@@ -2,10 +2,20 @@ from fastapi import FastAPI, HTTPException
 from schema import BenchmarkConfig, BenchTask, BenchTaskResponse
 from scheduler import GPUScheduler
 from cluster import GPUCluster
+from dotenv import load_dotenv
+import os
 
+load_dotenv()
 app = FastAPI()
 
-cluster = GPUCluster([6, 7])
+gpu_ids_env = os.getenv("GPU_IDS", "")
+
+# remove brackets if present
+gpu_ids_env = gpu_ids_env.strip("[]")
+
+gpu_id_list = [int(x.strip()) for x in gpu_ids_env.split(",") if x.strip()]
+
+cluster = GPUCluster(gpu_id_list)
 scheduler = GPUScheduler(cluster)
 
 task_counter = 0
