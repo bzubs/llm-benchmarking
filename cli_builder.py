@@ -3,14 +3,13 @@ from schema import BenchmarkConfig
 
 
 def build_cli(cfg: BenchmarkConfig) -> list:
-    # For online (serve) benchmarks
     cmd = [
-            "vllm", "bench", "serve",
-            "--backend", cfg.backend,
-            "--model", cfg.model_name,
-            "--endpoint", cfg.endpoint,
-            "--host", cfg.host,
-            "--port", cfg.port,
+        "vllm", "bench", "serve",
+        "--backend", cfg.backend,
+        "--model", cfg.model_name,
+        "--endpoint", cfg.endpoint,
+        "--host", cfg.host,
+        "--port", cfg.port,
     ]
 
     if cfg.num_prompts:
