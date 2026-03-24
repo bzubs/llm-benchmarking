@@ -2,6 +2,7 @@ import threading
 import time
 from runner import serve_then_bench
 from schema import BenchResult
+from writer import append_jsonl_history
 
 class TaskExecutor:
     def __init__(self, cluster):
@@ -36,7 +37,11 @@ class TaskExecutor:
         gpu_id = node.gpu.id
         port = 8000 + gpu_id  # unique port per GPU
 
+        task.config.port = str(port)
+
         print(f"[EXECUTOR] Running Task {task.id} on GPU {gpu_id}")
+
+        result = {}
 
         try:
             result = serve_then_bench(task, port=port)
@@ -60,6 +65,23 @@ class TaskExecutor:
                 runtime_sec=0,
                 metrics={"error": str(e)}
             )
+
+
+        runtime = 0.0
+        code = 4
+        metrics = {}
+
+        if isinstance(result, BenchResult):
+            runtime = result.runtime_sec or 0.0
+            code = result.returncode
+            metrics = result.metrics
+        elif isinstance(result, dict):
+            runtime = result.get("runtime_sec") or 0.0
+            code = result.get("returncode") or -1
+            metrics = result.get("metrics") or {}
+
+        append_jsonl_history(task, runtime, code, metrics)    
+
 
         # CRITICAL SECTION
         self.cluster.pop_task(gpu_id, task)
