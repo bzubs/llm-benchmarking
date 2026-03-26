@@ -29,11 +29,12 @@ backend_port = os.getenv("BACKEND_PORT")
 BACKEND_URL = f"http://127.0.0.1:{backend_port}"
 
 #CONFIG FOR GPUS
-
 gpu_ids_env = os.getenv("GPU_IDS", "")
 gpu_ids_env = gpu_ids_env.strip("[]")
 gpu_id_list = [int(x.strip()) for x in gpu_ids_env.split(",") if x.strip()]
 n_gpus_available = len(gpu_id_list)
+
+
 
 st.set_page_config(page_title="vLLM Benchmark", layout="wide")
 
@@ -44,6 +45,18 @@ if "authenticated" not in st.session_state:
 
 if "username" not in st.session_state:
     st.session_state.username = None
+
+if "benchmark_running" not in st.session_state:
+    st.session_state.benchmark_running = False
+
+if "active_task_id" not in st.session_state:
+    st.session_state.active_task_id = None
+
+if "start_run" not in st.session_state:
+    st.session_state.start_run = False
+
+if "last_result" not in st.session_state:
+    st.session_state.last_result = None
 
 # Block app if not logged in
 if not st.session_state.authenticated:
@@ -146,21 +159,12 @@ st.markdown(
     unsafe_allow_html=True
 )
 
+is_valid = True
+
+
 with benchmark_tab:
     st.title("vLLM Benchmark")
     st.write("Run online serving benchmarks on various LLM models")
-
-    if "last_result" not in st.session_state:
-        st.session_state.last_result = None
-
-    if "benchmark_running" not in st.session_state:
-        st.session_state.benchmark_running = False
-
-    if "is_unvalid" not in st.session_state:
-        st.session_state.is_unvalid = False
-
-    is_valid = True
-
 
     #sidebar user card
     with st.sidebar:
@@ -197,10 +201,13 @@ with benchmark_tab:
             if st.button("↩ Logout", key="logout", help="Logout"):
                 st.session_state.authenticated = False
                 st.session_state.username = None
+                st.session_state.active_task_id = None
+                st.session_state.benchmark_running = False
+                st.session_state.start_run = False
                 st.rerun()
 
     st.sidebar.markdown("---")
-  
+
     # Sidebar for configuration
     st.sidebar.markdown(
     """
@@ -223,9 +230,10 @@ with benchmark_tab:
     #)
 
     #st.sidebar.markdown("-----")
-    st.sidebar.subheader("GPU Info")
-    st.sidebar.markdown(f"Available count of GPUs: {n_gpus_available}")
-    st.sidebar.markdown("-----")
+    with st.sidebar:
+        st.subheader("GPU Info")
+        st.markdown(f"Available GPUs: {n_gpus_available}")
+
 
     st.sidebar.subheader("Model Serving Parameters")
     st.sidebar.info("All model params are automatically fetched and set. Over-riding these may enable unexpected behaviour.")
@@ -281,7 +289,7 @@ with benchmark_tab:
             "Number of GPUs",
             value=1,
             min_value=1,
-            max_value =2,
+            max_value =n_gpus_available,
             help="Number of GPUs to Run Benchmark on"
         )
 
@@ -307,6 +315,9 @@ with benchmark_tab:
         [Learn more at Official Docs](https://docs.vllm.ai/en/latest/cli/serve/#-quantization-q)
         """
         )
+
+    with st.sidebar:
+        st.subheader("GPU Config")
 
     col1, col2 = st.sidebar.columns(2)
     with col1:
@@ -350,6 +361,7 @@ with benchmark_tab:
         st.subheader("Model Info")
         st.markdown(f"Detected Model Type: {model_type}")
         st.markdown(f"Dataset used: {dataset_name}")
+        
       
 
 
@@ -398,6 +410,7 @@ with benchmark_tab:
         )   
         
     # Validations warning to help early exit
+
     total_required = tp_size * dp_size
 
     if total_required > n_gpus_available:
@@ -406,9 +419,9 @@ with benchmark_tab:
         )
         is_valid = False
 
-    if total_required < n_gpus_required:
+    if total_required < n_gpus_available:
         st.sidebar.warning(
-            f"You are under-utilizing GPUs. {total_required} required are less than {n_gpus_required} provisioned GPUs. Decrement Required Number of GPUs"
+            f"You are under-utilizing GPUs. {total_required}) are less than GPUs  ({n_gpus_required})"
         )
 
     if n_gpus_required > n_gpus_available:
@@ -417,14 +430,13 @@ with benchmark_tab:
         )
         is_valid = False
 
-    total_tokens = input_len + output_len
+    total_tokens = input_len + output_len    
 
     if total_tokens > max_model_len:
         st.sidebar.error(
             f"Total tokens ({total_tokens}) exceed max_model_len ({max_model_len})"
         )
         is_valid = False
-        
 
     st.sidebar.markdown("---")
 
@@ -487,320 +499,305 @@ with benchmark_tab:
     with col2:
         st.subheader("Action")
         
-            
-        run_button = st.button("Run Benchmark",
+        run_clicked = st.button(
+            "Run Benchmark",
             width='stretch',
             type="primary",
             disabled=st.session_state.get("benchmark_running", False) or not is_valid
         )
+
+        if run_clicked:
+            if st.session_state.benchmark_running:
+                st.error("A benchmark is already running. Please wait for it to complete.")
+            else:
+                st.session_state.benchmark_running = True
+                st.session_state.start_run = True
+                st.rerun()
+
     st.markdown("---")
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+            "Results",
+            "Configuration",
+            "Stdout",
+            "Debug",
+            "Logs"
+        ])
 
-    # Run benchmark when button clicked
-    if run_button:
-        # Double-click protection: check if a benchmark is already running
-        if "benchmark_running" not in st.session_state:
+    # --------------------------
+    # Non-blocking submit phase
+    # --------------------------
+    if st.session_state.get("start_run", False):
+        try:
+            # Create benchmark config
+            cfg = BenchmarkConfig(
+                username=str(st.session_state.username),
+                model_name=model_name,
+                dtype=dtype,
+                max_model_len=max_model_len,
+                input_len=input_len,
+                output_len=output_len,
+                num_prompts=num_prompts,
+                gpu_memory_util=gpu_memory_util,
+                n_gpus_required = n_gpus_required,
+                quantization=quantization,
+                max_concurrency=num_concurrency,
+                tp_size=tp_size,
+                dp_size=dp_size
+            )
+
+            # Submit to backend
+            resp = requests.post(f"{BACKEND_URL}/submit",json=cfg.model_dump())
+
+            if resp.status_code != 200:
+                raise Exception(f"Submit failed: {resp.text}")
+
+            data = resp.json()
+
+            task_id = data["id"]
+            st.session_state.active_task_id = task_id
+            st.session_state.start_run = False
+
+            st.success(f"Your Benchmarking Task has been acknowledged. Task ID is {task_id}. It has been has been scheduled to GPU ID : {data['gpu_assigned']}")
+
+        except Exception as e:
+            st.session_state.start_run = False
             st.session_state.benchmark_running = False
-        
-        if st.session_state.benchmark_running:
-            st.error(" A benchmark is already running. Please wait for it to complete.")
-        else:
-            st.session_state.benchmark_running = True
-                    
+            st.error(f"Submit failed: {str(e)}")
 
-            # Create tabs for results display
-            tab1, tab2, tab3, tab4, tab5 = st.tabs([
-                "Results", 
-                "Configuration", 
-                "Stdout", 
-                "Debug",
-                "Logs"
-            ])
-            
-            try:
-                # Create benchmark config
-                cfg = BenchmarkConfig(
-                    #benchmark_mode=benchmark_mode,
-                    #benchmark_type=config_benchmark_type,
-                    username= str(st.session_state.username),
-                    model_name=model_name,
-                    dtype=dtype,
-                    max_model_len=max_model_len,
-                    input_len=input_len,
-                    output_len=output_len,
-                    num_prompts=num_prompts,
-                    gpu_memory_util=gpu_memory_util,
-                    n_gpus_required = n_gpus_required,
-                    quantization=quantization,
-                    max_concurrency=num_concurrency,
-                    tp_size=tp_size,
-                    dp_size=dp_size
-                    
-                )
+    # --------------------------
+    # Polling phase
+    # --------------------------
+    if st.session_state.active_task_id:
+        task_id = st.session_state.active_task_id
 
-                # Submit to backend
-                resp = requests.post(f"{BACKEND_URL}/submit",json=cfg.model_dump())
+        status_holder = st.info(f"Polling task ID: {task_id}")
+        progress_bar = st.progress(0)
+        progress_text = st.empty()
 
-                #st.write("POST status:", resp.status_code)
-                #st.write("POST response:", resp.text)
+        result = None
 
+        try:
+            res = requests.get(f"{BACKEND_URL}/status/{task_id}", timeout=2)
 
-                if resp.status_code != 200:
-                    raise Exception(f"Submit failed: {resp.text}")
-
-                data = resp.json()
-
-                task_id = data["id"]
+            if res.status_code != 200:
+                progress_text.error("Failed to fetch status")
+            else:
+                data = res.json()
                 status = data["status"]
 
-                status_holder = st.info(f"Your Benchmarking Task has been acknowledged. Task ID is {task_id}. It has been has been scheduled to GPU ID : {data["gpu_assigned"]}")
+                # ---- STATUS HANDLING ----
+                if status == "queued":
+                    progress_text.info(f"Your task has been queued for GPU ID: {data['gpu_assigned']}")
+                    progress_bar.progress(0.2)
 
-                progress_bar = st.progress(0)
-                progress_text = st.empty()
+                elif status == "assigned":
+                    progress_text.info(f"Your task has been assigned to GPU ID: {data['gpu_assigned']}")
+                    progress_bar.progress(0.3)
 
-                progress_value = 0.0
-                result = {}
+                elif status == "running":
+                    progress_text.info("Running benchmark...")
+                    progress_bar.progress(0.7)
 
-                start_time = time.time()
-                TIMEOUT = 300  # 10 min
+                elif status == "completed":
+                    progress_bar.progress(1.0)
+                    progress_text.success("Benchmark Completed!")
 
+                    data = BenchTaskResponse(**data)
+                    result = data.result
 
-                while True:
-                    if time.time() - start_time > TIMEOUT:
-                        progress_text.error("Timeout exceeded for polling. No response from backend")
-                        break
-                    try:
-                        res = requests.get(f"{BACKEND_URL}/status/{task_id}", timeout=2)
+                    st.session_state.last_result = result
+                    st.session_state.active_task_id = None
+                    st.session_state.benchmark_running = False
 
-                        if res.status_code != 200:
-                            progress_text.error("Failed to fetch status")
-                            break
+                    print(data)
+                    print("\n")
 
-                        data = res.json()
-                        result = None
-                        status = data["status"]
+                    print(result)
+                    print("\n")
 
-                        # ---- STATUS HANDLING ----
-                        if status == "queued":
-                            progress_text.info(f"Your task has been queued for GPU ID: {data["gpu_assigned"]}")
-                            progress_value = min(progress_value + 0.02, 0.2)
+                elif status == "failed":
+                    progress_text.error("Failed")
+                    result = data.result
+                    st.session_state.active_task_id = None
+                    st.session_state.benchmark_running = False
 
-                        elif status == "assigned":
-                            progress_text.info(f"Your task has been assigned to GPU ID: {data["gpu_assigned"]}")
-                            progress_value = max(progress_value, 0.3)
+        except Exception as e:
+            progress_text.error(f"Polling error: {str(e)}")
 
-                        elif status == "running":
-                            progress_text.info("Running benchmark...")
-                            progress_value = min(progress_value + 0.05, 0.9)
+        if st.session_state.active_task_id:
+            time.sleep(2)
+            st.rerun()
 
-                        elif status == "completed":
-                            progress_bar.progress(1.0)
-                            progress_text.success("Benchmark Completed!")
-
-                            data = BenchTaskResponse(**data)
-
-                            print(data)
-                            print("\n")
-
-                            result = data.result
-                            print(result)
-                            print("\n")
-
-                            break
-
-                        elif status == "failed":
-                            progress_text.error("Failed")
-                            result = data.result
-                            break
-
-                        progress_bar.progress(progress_value)
-
-                    except Exception as e:
-                        progress_text.error(f"Polling error: {str(e)}")
-                        break
-
-                    time.sleep(2)
-
-                
-            
-                status_holder.empty()
-                metrics = result.metrics
-                with tab1:
-                    if not result or result.returncode != 0:
-                        st.error("Benchmark failed. Check other tabs for details.")
-                    else:
-                        st.subheader("Benchmark Metrics")
-                        if metrics:
-                            # Display metrics in a more organized way
-                            col1, col2 = st.columns(2)
-                                
-                            with col1:
-                                st.write("**Request Metrics**")
-                                if "successful_requests" in metrics:
-                                    st.metric("Successful Requests", int(metrics["successful_requests"]))
-                                if "benchmark_duration_sec" in metrics:
-                                    st.metric("Duration (s)", f"{metrics['benchmark_duration_sec']:.2f}")
-                                if "request_throughput" in metrics:
-                                    st.metric("Request Throughput (req/s)", f"{metrics['request_throughput']:.2f}")
-                                
-                            with col2:
-                                st.write("**Token Metrics**")
-                                if "total_input_tokens" in metrics:
-                                    st.metric("Total Input Tokens", int(metrics["total_input_tokens"]))
-                                if "total_generated_tokens" in metrics:
-                                    st.metric("Total Generated Tokens", int(metrics["total_generated_tokens"]))
-                                if "total_token_throughput" in metrics:
-                                    st.metric("Total Token Throughput (tok/s)", f"{metrics['total_token_throughput']:.2f}")
-                                
-                            st.divider()
-                                
-                            # Latency metrics (TTFT, TPOT, ITL)
-                            col1, col2, col3 = st.columns(3)
-                                
-                            with col1:
-                                st.write("**Time to First Token (TTFT) - ms**")
-                                    #if "mean_ttft_ms" in metrics:
-                                    #st.metric("Mean", f"{metrics['mean_ttft_ms']:.2f}")
-                                if "median_ttft_ms" in metrics:
-                                    st.metric("Median", f"{metrics['median_ttft_ms']:.2f}")
-                                    #if "p99_ttft_ms" in metrics:
-                                    #st.metric("P99", f"{metrics['p99_ttft_ms']:.2f}")
-                                
-                            with col2:
-                                st.write("**Time Per Output Token (TPOT) - ms**")
-                                    #if "mean_tpot_ms" in metrics:
-                                    #st.metric("Mean", f"{metrics['mean_tpot_ms']:.2f}")
-                                if "median_tpot_ms" in metrics:
-                                    st.metric("Median", f"{metrics['median_tpot_ms']:.2f}")
-                                    #if "p99_tpot_ms" in metrics:
-                                    #st.metric("P99", f"{metrics['p99_tpot_ms']:.2f}")
-                                
-                            with col3:
-                                st.write("**Inter-token Latency (ITL) - ms**")
-                                    #if "mean_itl_ms" in metrics:
-                                    #st.metric("Mean", f"{metrics['mean_itl_ms']:.2f}")
-                                if "median_itl_ms" in metrics:
-                                    st.metric("Median", f"{metrics['median_itl_ms']:.2f}")
-                                    #if "p99_itl_ms" in metrics:
+        if result is not None:
+            status_holder.empty()
+            metrics = result.metrics
+            with tab1:
+                if not result or result.returncode != 0:
+                    st.error("Benchmark failed. Check other tabs for details.")
+                else:
+                    st.subheader("Benchmark Metrics")
+                    if metrics:
+                        # Display metrics in a more organized way
+                        col1, col2 = st.columns(2)
                             
-                                    #st.metric("P99", f"{metrics['p99_itl_ms']:.2f}")
-
-                            st.divider()
-                            st.subheader("GPU Metrics")
-
-                            col1, col2 = st.columns(2)
-
-                            with col1:
-                                if "avg_gpu_util_percent" in metrics:
-                                    st.metric("Avg GPU Util (%)", f"{metrics['avg_gpu_util_percent']:.2f}")
-                                if "avg_gpu_mem_mb" in metrics:
-                                    st.metric("Avg GPU Memory (MB)", f"{metrics['avg_gpu_mem_mb']:.2f}")
-
-                            with col2:
-                                if "peak_gpu_util_percent" in metrics:
-                                    st.metric("Peak GPU Util (%)", f"{metrics['peak_gpu_util_percent']:.2f}")
-                                if "peak_gpu_mem_mb" in metrics:
-                                    st.metric("Peak GPU Memory (MB)", f"{metrics['peak_gpu_mem_mb']:.2f}")
-
+                        with col1:
+                            st.write("**Request Metrics**")
+                            if "successful_requests" in metrics:
+                                st.metric("Successful Requests", int(metrics["successful_requests"]))
+                            if "benchmark_duration_sec" in metrics:
+                                st.metric("Duration (s)", f"{metrics['benchmark_duration_sec']:.2f}")
+                            if "request_throughput" in metrics:
+                                st.metric("Request Throughput (req/s)", f"{metrics['request_throughput']:.2f}")
                             
-                        else:
-                            st.warning("No metrics were extracted. Check Logs on Server")
-                        
-                        # Display runtime
+                        with col2:
+                            st.write("**Token Metrics**")
+                            if "total_input_tokens" in metrics:
+                                st.metric("Total Input Tokens", int(metrics["total_input_tokens"]))
+                            if "total_generated_tokens" in metrics:
+                                st.metric("Total Generated Tokens", int(metrics["total_generated_tokens"]))
+                            if "total_token_throughput" in metrics:
+                                st.metric("Total Token Throughput (tok/s)", f"{metrics['total_token_throughput']:.2f}")
+                            
                         st.divider()
-                        runtime = result.runtime_sec or 0
-                        st.metric("Total Runtime", f"{runtime:.2f} seconds")
-                
-                with tab2:
-                    st.subheader("Benchmark Configuration")
-                    config = result.config
-                    st.json(config)
-                
-                with tab3:
-                    st.subheader("Raw Stdout Output")
-
-                    task_id = data.id 
-
-                    log_path = f"summary/{task_id}_summary.log"
-
-                    if os.path.exists(log_path):
-                        with open(log_path, "r") as f:
-                            stdout = f.read()
-
-                        if stdout:
-                            st.code(stdout[-3000:], language="text")
-                        else:
-                            st.write("STDOUT file is empty")
-                    else:
-                        st.write("No STDOUT file found for this task")
-                
-                with tab4:
-                    st.subheader("Debug Information")
-                    st.write(f"**Metrics Found**: {len(metrics)}")
-                    st.write(f"**Metrics Keys**: {list(metrics.keys())}")
-                    st.write("**Full Metrics Dictionary**:")
-                    st.json(metrics if metrics else {"message": "No metrics extracted"})
-                    
-                    st.divider()
-                    st.write("**Command Executed**:")
-                    cmd = build_cli(result.config)
-                    st.code(" ".join(cmd), language="bash")
-
-                with tab5:
-                    st.subheader("Process Logs")
-                    task_id = data.id 
-
-                    log_path = f"logs/task_{task_id}.log"
-
-                    if os.path.exists(log_path):
-                        with open(log_path, "r") as f:
-                            stdout = f.read()
-
-                        if stdout:
-                            st.code(stdout[-3000:], language="text")
-                        else:
-                            st.write("Process Log file is empty")
-                    else:
-                        st.write("No Process log file found for this task")
-                                        
-                
-                # Export results button
-                st.divider()
-                st.subheader("Export Results")
-                
-                col1, col2 = st.columns(2)
-                with col1:
-                    json_str = result.model_dump_json(indent=2)
-                    st.download_button(
-                        label="Download as JSON",
-                        data=json_str,
-                        file_name=f"benchmark_{model_name.replace('/', '_')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-                        mime="application/json"
-                    )
-                
-                with col2:
-                    # Create CSV for metrics
-                    if result.metrics:
-                        csv_data = "Metric,Value\n"
-                        for k, v in result.metrics.items():
-                            csv_data += f"{k},{v}\n"
+                            
+                        # Latency metrics (TTFT, TPOT, ITL)
+                        col1, col2, col3 = st.columns(3)
+                            
+                        with col1:
+                            st.write("**Time to First Token (TTFT) - ms**")
+                                #if "mean_ttft_ms" in metrics:
+                                #st.metric("Mean", f"{metrics['mean_ttft_ms']:.2f}")
+                            if "median_ttft_ms" in metrics:
+                                st.metric("Median", f"{metrics['median_ttft_ms']:.2f}")
+                                #if "p99_ttft_ms" in metrics:
+                                #st.metric("P99", f"{metrics['p99_ttft_ms']:.2f}")
+                            
+                        with col2:
+                            st.write("**Time Per Output Token (TPOT) - ms**")
+                                #if "mean_tpot_ms" in metrics:
+                                #st.metric("Mean", f"{metrics['mean_tpot_ms']:.2f}")
+                            if "median_tpot_ms" in metrics:
+                                st.metric("Median", f"{metrics['median_tpot_ms']:.2f}")
+                                #if "p99_tpot_ms" in metrics:
+                                #st.metric("P99", f"{metrics['p99_tpot_ms']:.2f}")
+                            
+                        with col3:
+                            st.write("**Inter-token Latency (ITL) - ms**")
+                                #if "mean_itl_ms" in metrics:
+                                #st.metric("Mean", f"{metrics['mean_itl_ms']:.2f}")
+                            if "median_itl_ms" in metrics:
+                                st.metric("Median", f"{metrics['median_itl_ms']:.2f}")
+                                #if "p99_itl_ms" in metrics:
                         
-                        st.download_button(
-                            label="Download Metrics as CSV",
-                            data=csv_data,
-                            file_name=f"metrics_{model_name.replace('/', '_')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                            mime="text/csv"
-                        )
-        
-            except Exception as e:
-                st.error(f"An error occurred: {str(e)}")
-                st.error("Stack trace:")
-                st.code(str(e), language="text")
-                import traceback
-                st.code(traceback.format_exc(), language="text")
-            finally:
-                # Reset benchmark running flag
-                st.session_state.benchmark_running = False
+                                #st.metric("P99", f"{metrics['p99_itl_ms']:.2f}")
 
+                        st.divider()
+                        st.subheader("GPU Metrics")
+
+                        col1, col2 = st.columns(2)
+
+                        with col1:
+                            if "avg_gpu_util_percent" in metrics:
+                                st.metric("Avg GPU Util (%)", f"{metrics['avg_gpu_util_percent']:.2f}")
+                            if "avg_gpu_mem_mb" in metrics:
+                                st.metric("Avg GPU Memory (MB)", f"{metrics['avg_gpu_mem_mb']:.2f}")
+
+                        with col2:
+                            if "peak_gpu_util_percent" in metrics:
+                                st.metric("Peak GPU Util (%)", f"{metrics['peak_gpu_util_percent']:.2f}")
+                            if "peak_gpu_mem_mb" in metrics:
+                                st.metric("Peak GPU Memory (MB)", f"{metrics['peak_gpu_mem_mb']:.2f}")
+
+                        
+                    else:
+                        st.warning("No metrics were extracted. Check Logs on Server")
+                    
+                    # Display runtime
+                    st.divider()
+                    runtime = result.runtime_sec or 0
+                    st.metric("Total Runtime", f"{runtime:.2f} seconds")
+            
+            with tab2:
+                st.subheader("Benchmark Configuration")
+                config = result.config
+                st.json(config)
+            
+            with tab3:
+                st.subheader("Raw Stdout Output")
+
+                task_id = task_id
+
+                log_path = f"summary/{task_id}_summary.log"
+
+                if os.path.exists(log_path):
+                    with open(log_path, "r") as f:
+                        stdout = f.read()
+
+                    if stdout:
+                        st.code(stdout[-3000:], language="text")
+                    else:
+                        st.write("STDOUT file is empty")
+                else:
+                    st.write("No STDOUT file found for this task")
+            
+            with tab4:
+                st.subheader("Debug Information")
+                st.write(f"**Metrics Found**: {len(metrics)}")
+                st.write(f"**Metrics Keys**: {list(metrics.keys())}")
+                st.write("**Full Metrics Dictionary**:")
+                st.json(metrics if metrics else {"message": "No metrics extracted"})
+                
+                st.divider()
+                st.write("**Command Executed**:")
+                cmd = build_cli(result.config)
+                st.code(" ".join(cmd), language="bash")
+
+            with tab5:
+                st.subheader("Process Logs")
+                task_id = task_id
+
+                log_path = f"logs/task_{task_id}.log"
+
+                if os.path.exists(log_path):
+                    with open(log_path, "r") as f:
+                        stdout = f.read()
+
+                    if stdout:
+                        st.code(stdout[-3000:], language="text")
+                    else:
+                        st.write("Process Log file is empty")
+                else:
+                    st.write("No Process log file found for this task")
+                                    
+            
+            # Export results button
+            st.divider()
+            st.subheader("Export Results")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                json_str = result.model_dump_json(indent=2)
+                st.download_button(
+                    label="Download as JSON",
+                    data=json_str,
+                    file_name=f"benchmark_{model_name.replace('/', '_')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                    mime="application/json"
+                )
+            
+            with col2:
+                # Create CSV for metrics
+                if result.metrics:
+                    csv_data = "Metric,Value\n"
+                    for k, v in result.metrics.items():
+                        csv_data += f"{k},{v}\n"
+                    
+                    st.download_button(
+                        label="Download Metrics as CSV",
+                        data=csv_data,
+                        file_name=f"metrics_{model_name.replace('/', '_')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                        mime="text/csv"
+                    )
+        
     # Footer
     st.markdown("---")
     st.markdown(
