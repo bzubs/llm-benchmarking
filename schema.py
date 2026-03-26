@@ -4,12 +4,12 @@ from typing import Optional, Literal, List, Dict, Any
 
 class BenchmarkConfig(BaseModel):
 
-    # mode and type both deprecated in v2
+    # mode and type both deprecated in v2+
     benchmark_mode: str = "Online (Real-time Serving)"
     benchmark_type: Literal["serve"] = "serve"
     
     #user
-    username : str = "none"
+    username : Optional[str] = None
     
     #model
     model_name: str
@@ -31,11 +31,13 @@ class BenchmarkConfig(BaseModel):
     backend: Optional[str] = "vllm"
     endpoint: Optional[str] = "/v1/completions"
     host : str = "localhost"
-    port : str = "8023"
+    port : str = "8000"
 
     #gpu
     gpu_memory_util : Optional[float] = 0.85
     n_gpus_required : int = 1
+    dp_size : int = 1
+    tp_size : int = 1
 
     
 
