@@ -2,12 +2,14 @@ import streamlit as st
 import json
 import pandas as pd
 import os
+import io
+import threading
 import time
 from datetime import datetime
 from contextlib import redirect_stdout
 from helper import fetch_hf_models, detect_model_type
 from resolver import CapabilityResolver
-from schema import BenchmarkConfig
+from schema import BenchmarkConfig, BenchTaskResponse
 from cli_builder import build_cli
 from configs import MODEL_CONFIGS, PRESET_CONFIGS
 from login import show_auth_screen
@@ -23,9 +25,15 @@ load_dotenv()
 history_file = os.getenv("HISTORY_FILE", "runs_history.jsonl")
 
 #CONFIG FOR BACKEND
-
 backend_port = os.getenv("BACKEND_PORT")
 BACKEND_URL = f"http://127.0.0.1:{backend_port}"
+
+#CONFIG FOR GPUS
+
+gpu_ids_env = os.getenv("GPU_IDS", "")
+gpu_ids_env = gpu_ids_env.strip("[]")
+gpu_id_list = [int(x.strip()) for x in gpu_ids_env.split(",") if x.strip()]
+n_gpus_available = len(gpu_id_list)
 
 st.set_page_config(page_title="vLLM Benchmark", layout="wide")
 
@@ -151,6 +159,8 @@ with benchmark_tab:
     if "is_unvalid" not in st.session_state:
         st.session_state.is_unvalid = False
 
+    is_valid = True
+
 
     #sidebar user card
     with st.sidebar:
@@ -190,7 +200,7 @@ with benchmark_tab:
                 st.rerun()
 
     st.sidebar.markdown("---")
-
+  
     # Sidebar for configuration
     st.sidebar.markdown(
     """
@@ -205,7 +215,7 @@ with benchmark_tab:
     """,
     unsafe_allow_html=True
     )
-
+    #presets not integrated until
     #preset = st.sidebar.radio(
        # "Select Preset Config",
        # (list(PRESET_CONFIGS.keys()) + ["Custom"]),
@@ -213,6 +223,10 @@ with benchmark_tab:
     #)
 
     #st.sidebar.markdown("-----")
+    st.sidebar.subheader("GPU Info")
+    st.sidebar.markdown(f"Available count of GPUs: {n_gpus_available}")
+    st.sidebar.markdown("-----")
+
     st.sidebar.subheader("Model Serving Parameters")
     st.sidebar.info("All model params are automatically fetched and set. Over-riding these may enable unexpected behaviour.")
 
@@ -242,15 +256,10 @@ with benchmark_tab:
     # Detect model type chat/base
     model_type = detect_model_type(model_name)
 
-    #use dataset random for base model or sharegpt for chat
-    if model_type == "chat":
-        dataset_name = "sharegpt"
-        dataset_path = "ShareGPT_V3_unfiltered_cleaned_split.json"
-        endpoint = "/v1/chat/completions"
-    else:
-        dataset_name = "random"
-        dataset_path = None
-        endpoint = "/v1/completions"
+    #use dataset random for base model and set proper endpoint
+    dataset_name = "random"
+    dataset_path = None
+    endpoint = "/v1/completions"
 
     
     col1, col2 = st.sidebar.columns(2)
@@ -272,7 +281,7 @@ with benchmark_tab:
             "Number of GPUs",
             value=1,
             min_value=1,
-            max_value =8,
+            max_value =2,
             help="Number of GPUs to Run Benchmark on"
         )
 
@@ -299,6 +308,35 @@ with benchmark_tab:
         """
         )
 
+    col1, col2 = st.sidebar.columns(2)
+    with col1:
+        tp_size = st.number_input(
+            "Tensor Parallel Size",
+            value=1,
+            min_value=1,
+            help=f"""Tensor Parllel Size
+            [Learn More at Official Docs](https://docs.vllm.ai/en/latest/cli/serve/#-tensor-parallel-size-tp)"""
+        )
+
+    with col2:
+        dp_size = st.number_input(
+        "Data Parallel Size",
+        value=1,
+        min_value=1,
+        help=f"""Data Parallel Size
+        [Learn more at Official Docs](https://docs.vllm.ai/en/latest/cli/serve/#-data-parallel-size-dp)
+        """
+        )    
+    with st.sidebar:
+        gpu_type = st.selectbox(
+            "GPU Type",
+            ["H100", "L4", "L40s"],
+            index=0,
+            help=f"""Available types of GPUs to run the benchmark on
+            """
+            )
+
+
     gpu_memory_util = st.sidebar.slider(
         "GPU Memory Utilization",
         min_value=0.1,
@@ -312,8 +350,8 @@ with benchmark_tab:
         st.subheader("Model Info")
         st.markdown(f"Detected Model Type: {model_type}")
         st.markdown(f"Dataset used: {dataset_name}")
-        if model_type == "chat":
-            st.info("Chat models require the conversational style dataset like Sharegpt")
+      
+
 
     st.sidebar.markdown("---")
     st.sidebar.subheader("Model Benchmarking Parameters")
@@ -359,10 +397,33 @@ with benchmark_tab:
                 """
         )   
         
-    # Validation warning
+    # Validations warning to help early exit
+    total_required = tp_size * dp_size
+
+    if total_required > n_gpus_available:
+        st.sidebar.error(
+            f"Invalid config: {total_required} exceeds available GPUs ({n_gpus_available})"
+        )
+        is_valid = False
+
+    if total_required < n_gpus_required:
+        st.sidebar.warning(
+            f"You are under-utilizing GPUs. {total_required} required are less than {n_gpus_required} provisioned GPUs. Decrement Required Number of GPUs"
+        )
+
+    if n_gpus_required > n_gpus_available:
+        st.sidebar.error(
+            f"Requested GPUs ({n_gpus_required}) > available ({n_gpus_available})"
+        )
+        is_valid = False
+
     total_tokens = input_len + output_len
+
     if total_tokens > max_model_len:
-        st.sidebar.warning(f"Total tokens ({total_tokens}) exceeds max_model_len ({max_model_len})")
+        st.sidebar.error(
+            f"Total tokens ({total_tokens}) exceed max_model_len ({max_model_len})"
+        )
+        is_valid = False
         
 
     st.sidebar.markdown("---")
@@ -380,7 +441,7 @@ with benchmark_tab:
         with c1:
             st.metric("Model", model_name.split("/")[-1])
         with c2:
-            st.metric("Reguired Number of GPUs", n_gpus_required)
+            st.metric("Model Type", model_type)
         
         # Dataset Config
         c1, c2 = st.columns(2)
@@ -389,7 +450,7 @@ with benchmark_tab:
         with c2:
             st.metric("Prompts", num_prompts)
     
-        #dtype config
+        #dtype and quant config
         c1, c2 = st.columns(2)
         with c1:
             st.metric("Data Type", dtype)
@@ -401,6 +462,21 @@ with benchmark_tab:
             st.metric("Max Model Len", f"{max_model_len:,}")
         with c2:
             st.metric("GPU Memory Util", f"{gpu_memory_util:.0%}")
+
+        
+        c1, c2 = st.columns(2)
+        with c1:
+            st.metric("GPU Type", f"{gpu_type}")
+        with c2:
+            st.metric("GPUs Required", f"{n_gpus_required}")
+
+
+        c1, c2 = st.columns(2)
+        with c1:
+            st.metric("Tensor Parallel Size", f"{tp_size}")
+        with c2:
+            st.metric("Data Parallel Size", f"{dp_size}")
+
             
         c1, c2 = st.columns(2)
         with c1:
@@ -415,7 +491,7 @@ with benchmark_tab:
         run_button = st.button("Run Benchmark",
             width='stretch',
             type="primary",
-            disabled=st.session_state.get("benchmark_running", False)
+            disabled=st.session_state.get("benchmark_running", False) or not is_valid
         )
     st.markdown("---")
 
@@ -456,9 +532,9 @@ with benchmark_tab:
                     n_gpus_required = n_gpus_required,
                     quantization=quantization,
                     max_concurrency=num_concurrency,
-                    dataset_name= dataset_name,
-                    dataset_path= dataset_path,
-                    endpoint = endpoint
+                    tp_size=tp_size,
+                    dp_size=dp_size
+                    
                 )
 
                 # Submit to backend
@@ -500,6 +576,7 @@ with benchmark_tab:
                             break
 
                         data = res.json()
+                        result = None
                         status = data["status"]
 
                         # ---- STATUS HANDLING ----
@@ -518,12 +595,21 @@ with benchmark_tab:
                         elif status == "completed":
                             progress_bar.progress(1.0)
                             progress_text.success("Benchmark Completed!")
-                            result = data.get("result") or {}
+
+                            data = BenchTaskResponse(**data)
+
+                            print(data)
+                            print("\n")
+
+                            result = data.result
+                            print(result)
+                            print("\n")
+
                             break
 
                         elif status == "failed":
                             progress_text.error("Failed")
-                            result = data.get("result") or {}
+                            result = data.result
                             break
 
                         progress_bar.progress(progress_value)
@@ -537,15 +623,12 @@ with benchmark_tab:
                 
             
                 status_holder.empty()
-                metrics = result.get("metrics") or {}
+                metrics = result.metrics
                 with tab1:
-                    if not result or result['returncode'] != 0:
+                    if not result or result.returncode != 0:
                         st.error("Benchmark failed. Check other tabs for details.")
                     else:
                         st.subheader("Benchmark Metrics")
-                        metrics = result.get("metrics") or {}
-
-                        
                         if metrics:
                             # Display metrics in a more organized way
                             col1, col2 = st.columns(2)
@@ -620,22 +703,22 @@ with benchmark_tab:
 
                             
                         else:
-                            st.warning("No metrics were extracted. Check the logs for details.")
+                            st.warning("No metrics were extracted. Check Logs on Server")
                         
                         # Display runtime
                         st.divider()
-                        runtime = result.get("runtime_sec", 0)
+                        runtime = result.runtime_sec or 0
                         st.metric("Total Runtime", f"{runtime:.2f} seconds")
                 
                 with tab2:
                     st.subheader("Benchmark Configuration")
-                    config = result.get("config") or {}
+                    config = result.config
                     st.json(config)
                 
                 with tab3:
                     st.subheader("Raw Stdout Output")
 
-                    task_id = data.get("id") 
+                    task_id = data.id 
 
                     log_path = f"summary/{task_id}_summary.log"
 
@@ -664,7 +747,7 @@ with benchmark_tab:
 
                 with tab5:
                     st.subheader("Process Logs")
-                    task_id = data.get("id") 
+                    task_id = data.id 
 
                     log_path = f"logs/task_{task_id}.log"
 
@@ -686,7 +769,7 @@ with benchmark_tab:
                 
                 col1, col2 = st.columns(2)
                 with col1:
-                    json_str = json.dumps(result, indent=2)
+                    json_str = result.model_dump_json(indent=2)
                     st.download_button(
                         label="Download as JSON",
                         data=json_str,
@@ -696,9 +779,9 @@ with benchmark_tab:
                 
                 with col2:
                     # Create CSV for metrics
-                    if result.get("metrics"):
+                    if result.metrics:
                         csv_data = "Metric,Value\n"
-                        for k, v in result.get("metrics", {}).items():
+                        for k, v in result.metrics.items():
                             csv_data += f"{k},{v}\n"
                         
                         st.download_button(
