@@ -15,13 +15,12 @@ from pynvml import (
     NVMLError
 )
 
-
 def sample_gpu_stats(task_id: int, gpu_id: int, stop_event: threading.Event, samples: list):
     try:
         nvmlInit()
 
-        # IMPORTANT: always index 0 because of CUDA_VISIBLE_DEVICES masking
-        handle = nvmlDeviceGetHandleByIndex(0)
+        # FIX: use actual GPU id
+        handle = nvmlDeviceGetHandleByIndex(gpu_id)
 
         while not stop_event.is_set():
             util = nvmlDeviceGetUtilizationRates(handle)
@@ -29,11 +28,11 @@ def sample_gpu_stats(task_id: int, gpu_id: int, stop_event: threading.Event, sam
 
             samples.append({
                 "gpu_util_percent": util.gpu,
-                "mem_used_mb": int(mem.used) / 1024 / 1024,
-                "mem_total_mb": int(mem.total) / 1024 / 1024
+                "mem_used_mb": mem.used / 1024 / 1024,
+                "mem_total_mb": mem.total / 1024 / 1024
             })
 
-            time.sleep(0.2)
+            time.sleep(0.05)  # better resolution
 
     except NVMLError as e:
         write_task_log(task_id, f"[GPU SAMPLER ERROR] {str(e)}")
@@ -43,6 +42,7 @@ def sample_gpu_stats(task_id: int, gpu_id: int, stop_event: threading.Event, sam
             nvmlShutdown()
         except:
             pass
+
 
 
 def parse_metrics(task_id: int, stdout: str) -> dict:
@@ -155,7 +155,6 @@ def serve_then_bench(task: BenchTask, port: int, host: str = "127.0.0.1"):
     gpu_id = task.gpu_assigned
     task_id = task.id
 
-
     server_proc = None
     gpu_samples = []
     stop_event = threading.Event()
@@ -214,7 +213,6 @@ def serve_then_bench(task: BenchTask, port: int, host: str = "127.0.0.1"):
 
         metrics = parse_metrics(task_id, stdout)
 
-        task.status = "completed"
 
         if gpu_samples:
             metrics.update({
@@ -225,7 +223,7 @@ def serve_then_bench(task: BenchTask, port: int, host: str = "127.0.0.1"):
             })
 
         write_benchmark_log(task, duration, proc.returncode, metrics, stderr, stdout)
-        append_jsonl_history(task, duration, proc.returncode, metrics)
+
 
         return {
             "config": cfg.model_dump(),
