@@ -1,95 +1,91 @@
 import threading
 import time
+import requests
 from runner import serve_then_bench
 from schema import BenchResult
 from writer import append_jsonl_history
 
+
 class TaskExecutor:
-    def __init__(self, cluster):
+    def __init__(self, cluster, scheduler):
         self.cluster = cluster
         self.running = True
+        self.scheduler = scheduler
 
     def start(self):
         while self.running:
-            for node in self.cluster:
 
-                if not node.queue:
-                    continue
+            for task in list(self.cluster.pending_tasks):
 
-                task = node.queue[0]
-
+                # skip non-assigned
                 if task.status != "assigned":
                     continue
 
-                # mark as running BEFORE thread starts (avoid double scheduling)
+                # prevent double scheduling
                 task.status = "running"
 
                 t = threading.Thread(
                     target=self.run_task,
-                    args=(node, task),
+                    args=(task,),
                     daemon=True
                 )
                 t.start()
 
-            time.sleep(0.5)  # avoid tight loop
+            time.sleep(0.5)
 
-    def run_task(self, node, task):
-        gpu_id = node.gpu.id
-        port = 8000 + gpu_id  # unique port per GPU
+    def run_task(self, task):
+        gpu_ids = task.gpu_assigned  
+        primary_gpu = gpu_ids[0]     # pick one for port mapping
 
+        port = 8000 + primary_gpu
         task.config.port = str(port)
 
-        print(f"[EXECUTOR] Running Task {task.id} on GPU {gpu_id}")
-
-        result = {}
+        print(f"[EXECUTOR] Running Task {task.id} on GPUs {gpu_ids}")
 
         try:
-            result = serve_then_bench(task, port=port)
+            # serve_then_bench already uses task.gpu_assigned internally
+            serve_then_bench(task, port=port)
 
-            if result["returncode"] == 0:
+            if task.status == "completed":
                 print(f"[EXECUTOR] Completed Task {task.id}")
-                result = BenchResult(**result)
-                task.result = result
-                task.status = "completed"
-
             else:
                 print(f"[EXECUTOR] Failed Task {task.id}")
-                task.status = "failed"
 
         except Exception as e:
             print(f"[EXECUTOR] Error Task {task.id}: {e}")
+
             task.status = "failed"
             task.result = BenchResult(
-                config=task.config.model_dump(),
+                config=task.config,
                 returncode=-1,
                 runtime_sec=0,
-                metrics={"error": str(e)}
+                metrics={},
+                error_msg=str(e)
             )
 
+        #persist
+        append_jsonl_history(
+            task,
+            task.result.runtime_sec if task.result else 0,
+            task.result.returncode if task.result else -1,
+            task.result.metrics if task.result else {}
+        )
 
-        runtime = 0.0
-        code = 4
-        metrics = {}
+        requests.post(
+            f"http://{ROUTER_IP}:{PORT}/log",
+            json={
+                "task": task.model_dump(),
+                "runtime_sec": task.result.runtime_sec if task.result else 0,
+                "returncode": task.result.returncode if task.result else -1,
+                "metrics": task.result.metrics if task.result else {}
+            }
+        )
 
-        if isinstance(result, BenchResult):
-            runtime = result.runtime_sec or 0.0
-            code = result.returncode
-            metrics = result.metrics
-        elif isinstance(result, dict):
-            runtime = result.get("runtime_sec") or 0.0
-            code = result.get("returncode") or -1
-            metrics = result.get("metrics") or {}
+        # release all GPUs
+        self.cluster.release_gpus(gpu_ids)
 
-        append_jsonl_history(task, runtime, code, metrics)    
+        self.scheduler.try_schedule_pending_tasks()
 
-
-        # CRITICAL SECTION
-        self.cluster.pop_task(gpu_id, task)
-
-        if node.queue:
-            next_task = node.queue[0]
-            next_task.status = "assigned"
-        else:
-            node.gpu.status = "free"
-
-        
+        # remove from global queue
+        if task in self.cluster.pending_tasks:
+            self.cluster.pending_tasks.remove(task)
