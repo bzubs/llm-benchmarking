@@ -1,7 +1,7 @@
 import threading
 import uvicorn
 import os
-from backend import app, cluster
+from backend import app, cluster, scheduler
 from executor import TaskExecutor
 from dotenv import load_dotenv
 
@@ -9,7 +9,7 @@ load_dotenv()
 
 backend_port = os.getenv("BACKEND_PORT")
 # Create executor
-executor = TaskExecutor(cluster)
+executor = TaskExecutor(cluster, scheduler)
 
 def start_executor():
     executor.start()
