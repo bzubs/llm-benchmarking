@@ -1,11 +1,15 @@
 import subprocess
 import time
+import socket
 import re
 import urllib.request
-from schema import BenchmarkConfig, BenchTask
-from cli_builder import env_for_gpu
-from writer import write_task_log, write_benchmark_log, append_jsonl_history
+import os
+from typing import List
+
+from schema import BenchmarkConfig, BenchTask, BenchResult
+from writer import write_task_log, write_benchmark_log
 import threading
+
 from pynvml import (
     nvmlInit,
     nvmlShutdown,
@@ -15,24 +19,53 @@ from pynvml import (
     NVMLError
 )
 
-def sample_gpu_stats(task_id: int, gpu_id: int, stop_event: threading.Event, samples: list):
+# =========================
+# MULTI-GPU ENV FUNCTION
+# =========================
+def is_port_in_use(host, port):
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        return s.connect_ex((host, port)) == 0
+
+def env_for_gpu(gpu_ids) -> dict:
+    env = os.environ.copy()
+
+    if isinstance(gpu_ids, int):
+        gpu_ids = [gpu_ids]
+
+    env["CUDA_VISIBLE_DEVICES"] = ",".join(str(g) for g in gpu_ids)
+    return env
+
+
+# =========================
+# MULTI-GPU SAMPLER
+# =========================
+def sample_gpu_stats(task_id: int, gpu_ids: list[int], stop_event: threading.Event, samples: list):
     try:
         nvmlInit()
 
-        # FIX: use actual GPU id
-        handle = nvmlDeviceGetHandleByIndex(gpu_id)
+        handles = {
+            gpu_id: nvmlDeviceGetHandleByIndex(gpu_id)
+            for gpu_id in gpu_ids
+        }
 
         while not stop_event.is_set():
-            util = nvmlDeviceGetUtilizationRates(handle)
-            mem = nvmlDeviceGetMemoryInfo(handle)
+            snapshot = {
+                "timestamp": time.time(),
+                "gpus": {}
+            }
 
-            samples.append({
-                "gpu_util_percent": util.gpu,
-                "mem_used_mb": mem.used / 1024 / 1024,
-                "mem_total_mb": mem.total / 1024 / 1024
-            })
+            for gpu_id, handle in handles.items():
+                util = nvmlDeviceGetUtilizationRates(handle)
+                mem = nvmlDeviceGetMemoryInfo(handle)
 
-            time.sleep(0.05)  # better resolution
+                snapshot["gpus"][str(gpu_id)] = {
+                    "gpu_util_percent": util.gpu,
+                    "mem_used_mb": mem.used / 1024 / 1024,
+                    "mem_total_mb": mem.total / 1024 / 1024,
+                }
+
+            samples.append(snapshot)
+            time.sleep(0.05)
 
     except NVMLError as e:
         write_task_log(task_id, f"[GPU SAMPLER ERROR] {str(e)}")
@@ -44,41 +77,57 @@ def sample_gpu_stats(task_id: int, gpu_id: int, stop_event: threading.Event, sam
             pass
 
 
-
+# =========================
+# METRICS PARSER
+# =========================
 def parse_metrics(task_id: int, stdout: str) -> dict:
     metrics = {}
+    try:  
+        patterns = {
+            "successful_requests": r"Successful requests:\s*(\d+)",
+            "benchmark_duration_sec": r"Benchmark duration \(s\):\s*([0-9.+-eE]+)",
+            "total_input_tokens": r"Total input tokens:\s*(\d+)",
+            "total_generated_tokens": r"Total generated tokens:\s*(\d+)",
+            "request_throughput": r"Request throughput \(req/s\):\s*([0-9.+-eE]+)",
+            "total_token_throughput": r"Total token throughput \(tok/s\):\s*([0-9.+-eE]+)",
 
-    write_task_log(task_id, "[PARSE_METRICS] Parsing metrics")
-    write_task_log(task_id, f"[PARSE_METRICS] Stdout length: {len(stdout)}")
+            "median_ttft_ms": r"Median TTFT \(ms\):\s*([0-9.+-eE]+)",
+            "p99_ttft_ms": r"P99 TTFT \(ms\):\s*([0-9.+-eE]+)",
+            "p95_ttft_ms": r"P95 TTFT \(ms\):\s*([0-9.+-eE]+)",
 
-    patterns = {
-        "successful_requests": r"Successful requests:\s+(\d+)",
-        "benchmark_duration_sec": r"Benchmark duration \(s\):\s+([\d.]+)",
-        "total_input_tokens": r"Total input tokens:\s+(\d+)",
-        "total_generated_tokens": r"Total generated tokens:\s+(\d+)",
-        "request_throughput": r"Request throughput \(req/s\):\s+([\d.]+)",
-        "output_token_throughput": r"Output token throughput \(tok/s\):\s+([\d.]+)",
-        "total_token_throughput": r"Total token throughput \(tok/s\):\s+([\d.]+)",
-        "mean_ttft_ms": r"Mean TTFT \(ms\):\s+([\d.]+)",
-        "median_ttft_ms": r"Median TTFT \(ms\):\s+([\d.]+)",
-        "p99_ttft_ms": r"P99 TTFT \(ms\):\s+([\d.]+)",
-        "mean_tpot_ms": r"Mean TPOT \(ms\):\s+([\d.]+)",
-        "median_tpot_ms": r"Median TPOT \(ms\):\s+([\d.]+)",
-        "p99_tpot_ms": r"P99 TPOT \(ms\):\s+([\d.]+)",
-        "mean_itl_ms": r"Mean ITL \(ms\):\s+([\d.]+)",
-        "median_itl_ms": r"Median ITL \(ms\):\s+([\d.]+)",
-        "p99_itl_ms": r"P99 ITL \(ms\):\s+([\d.]+)",
-    }
+            "median_tpot_ms": r"Median TPOT \(ms\):\s*([0-9.+-eE]+)",
+            "p99_tpot_ms": r"P99 TPOT \(ms\):\s*([0-9.+-eE]+)",
+            "p95_tpot_ms": r"P95 TPOT \(ms\):\s*([0-9.+-eE]+)",
 
-    for key, pattern in patterns.items():
-        m = re.search(pattern, stdout)
-        if m:
-            metrics[key] = float(m.group(1)) if "." in m.group(1) else int(m.group(1))
+            "median_itl_ms": r"Median ITL \(ms\):\s*([0-9.+-eE]+)",
+            "p99_itl_ms": r"P99 ITL \(ms\):\s*([0-9.+-eE]+)",
+            "p95_itl_ms": r"P95 ITL \(ms\):\s*([0-9.+-eE]+)",
 
-    write_task_log(task_id, f"[PARSE_METRICS] Extracted {len(metrics)} metrics")
+            "median_e2el_ms": r"Median E2EL \(ms\):\s*([0-9.+-eE]+)",
+            "p99_e2el_ms": r"P99 E2EL \(ms\):\s*([0-9.+-eE]+)",
+            "p95_e2el_ms": r"P95 E2EL \(ms\):\s*([0-9.+-eE]+)",
+        }
+
+        for key, pattern in patterns.items():
+            m = re.search(pattern, stdout)
+            if m:
+                metrics[key] = float(m.group(1)) if "." in m.group(1) else int(m.group(1))
+
+    except Exception as e:
+        write_task_log(task_id, "[PARSE METRICS] Error Parsing " + str(e))
+        raise RuntimeError(e)
+
+    if len(metrics.keys()) <= 0:
+        write_task_log(task_id, "[PARSE METRICS] Parsed Nothing. Likely Failure")  # ✅ FIXED
+    else:
+        write_task_log(task_id, "[PARSE METRICS] Parsing Successful")
+
     return metrics
 
 
+# =========================
+# WAIT FOR SERVER
+# =========================
 def wait_for_vllm_ready(host: str, port: int, timeout: int = 180) -> bool:
     start = time.time()
     url = f"http://{host}:{port}/v1/models"
@@ -88,14 +137,38 @@ def wait_for_vllm_ready(host: str, port: int, timeout: int = 180) -> bool:
             with urllib.request.urlopen(url, timeout=3) as resp:
                 if resp.status == 200:
                     return True
-        except Exception:
+        except:
             pass
         time.sleep(1)
 
     return False
 
 
-def start_vllm_server(task_id, cfg: BenchmarkConfig, gpu_id: int, port: int, host: str = "127.0.0.1"):
+# =========================
+# START SERVER
+# =========================
+def start_vllm_server(task: BenchTask, gpu_ids: list[int], port: int, host: str = "127.0.0.1"):
+    task_id = task.id
+    cfg = task.config
+
+    #NEW: Port conflict detection
+    if is_port_in_use(host, port):
+        error_msg = f"Port {port} already in use"
+
+        result = BenchResult(
+            config=cfg,
+            returncode=-1,
+            runtime_sec=0,
+            metrics={},
+            error_msg=error_msg
+        )
+
+        task.result = result
+        task.status = "failed"
+
+        write_task_log(task_id, "[START SERVER] " + error_msg)
+        raise RuntimeError(error_msg)
+
     cmd = [
         "vllm", "serve", cfg.model_name,
         "--host", host,
@@ -106,11 +179,16 @@ def start_vllm_server(task_id, cfg: BenchmarkConfig, gpu_id: int, port: int, hos
 
     if cfg.quantization != "none":
         cmd += ["--quantization", str(cfg.quantization)]
+    if cfg.tp_size > 1:
+        cmd += ["--tensor-parallel-size", str(cfg.tp_size)]
+    if cfg.dp_size > 1:
+        cmd += ["--data-parallel-size", str(cfg.dp_size)]
 
-    env = env_for_gpu(gpu_id)
+    env = env_for_gpu(gpu_ids)
 
     write_task_log(task_id, "=" * 80)
-    write_task_log(task_id, f"[START SERVER] {' '.join(cmd)}")
+    write_task_log(task_id, f"[START SERVER] CMD FORMED {' '.join(cmd)}")
+    write_task_log(task_id, f"[GPU CONFIG] FOUND GPUs: {gpu_ids}")
 
     proc = subprocess.Popen(
         cmd,
@@ -128,31 +206,75 @@ def start_vllm_server(task_id, cfg: BenchmarkConfig, gpu_id: int, port: int, hos
             _, stderr = proc.communicate()
 
             root_error = None
-            for line in reversed(stderr.splitlines()):
-                if line.startswith(("ValueError:", "RuntimeError:", "OSError:", "Exception:")):
+            lines = stderr.splitlines()
+
+            #Step 1: Look for OOM / CUDA errors FIRST (highest priority)
+            for line in reversed(lines):
+                l = line.lower()
+                if "out of memory" in l or "cuda" in l:
                     root_error = line
                     break
 
+            # Step 2: fallback to Python exceptions
             if not root_error:
-                root_error = "\n".join(stderr.splitlines()[-5:])
+                for line in reversed(lines):
+                    if line.startswith(("ValueError:", "RuntimeError:", "OSError:", "Exception:")):
+                        root_error = line
+                        break
 
-            write_task_log(task_id, "[START SERVER] Failed")
-            raise RuntimeError(f"vLLM server failed:\n{root_error}")
+            # Step 3: final fallback
+            if not root_error:
+                root_error = "\n".join(lines[-10:])  # slightly more context
+
+            error_msg = f"vLLM server startup failed:\n{root_error}"
+
+            result = BenchResult(
+                config=cfg,
+                returncode=-1,
+                runtime_sec=0,
+                metrics={},
+                error_msg=error_msg
+            )
+
+            task.result = result
+            task.status = "failed"
+
+            write_task_log(task_id, "[START SERVER]" + error_msg)
+            raise RuntimeError(error_msg)
 
         if wait_for_vllm_ready(host, port, timeout=2):
-            write_task_log(task_id, "[START SERVER] Ready")
+            write_task_log(task_id, "[START SERVER] vLLM Server Ready")
             return proc
 
         if time.time() - start_time > timeout:
             proc.terminate()
-            raise RuntimeError("vLLM server startup timed out")
+
+            error_msg = f"vLLM server startup timed out after {timeout}s"
+
+            result = BenchResult(
+                config=cfg,
+                returncode=-1,
+                runtime_sec=0,
+                metrics={},
+                error_msg=error_msg
+            )
+
+            task.result = result
+            task.status = "failed"
+
+            write_task_log(task_id, "[START SERVER]" + error_msg)
+
+            raise RuntimeError(error_msg)
 
         time.sleep(1)
 
 
+# =========================
+# MAIN EXECUTION
+# =========================
 def serve_then_bench(task: BenchTask, port: int, host: str = "127.0.0.1"):
     cfg = task.config
-    gpu_id = task.gpu_assigned
+    gpu_ids = task.gpu_assigned
     task_id = task.id
 
     server_proc = None
@@ -160,11 +282,12 @@ def serve_then_bench(task: BenchTask, port: int, host: str = "127.0.0.1"):
     stop_event = threading.Event()
 
     try:
-        server_proc = start_vllm_server(task_id, cfg, gpu_id, port, host)
+
+        server_proc = start_vllm_server(task, gpu_ids, port, host)
 
         sampler_thread = threading.Thread(
             target=sample_gpu_stats,
-            args=(task_id, gpu_id, stop_event, gpu_samples),
+            args=(task_id, gpu_ids, stop_event, gpu_samples),
             daemon=True
         )
         sampler_thread.start()
@@ -173,7 +296,7 @@ def serve_then_bench(task: BenchTask, port: int, host: str = "127.0.0.1"):
             "vllm", "bench", "serve",
             "--backend", cfg.backend,
             "--model", cfg.model_name,
-            "--endpoint", cfg.endpoint,
+            #"--endpoint", cfg.endpoint,
             "--host", host,
             "--port", str(port),
         ]
@@ -186,8 +309,13 @@ def serve_then_bench(task: BenchTask, port: int, host: str = "127.0.0.1"):
             cmd += ["--random-output-len", str(cfg.output_len)]
         if cfg.max_concurrency:
             cmd += ["--max-concurrency", str(cfg.max_concurrency)]
+        if cfg.request_rate:
+            cmd+= ["--request-rate", str(cfg.request_rate)]
 
-        write_task_log(task_id, f"[BENCH CMD] {' '.join(cmd)}")
+        cmd += ["--percentile-metrics", "e2el,tpot,ttft,itl"]
+        cmd += ["--metric-percentiles", "95,99"]
+
+        write_task_log(task_id, f"[SERVE THEN BENCH] CMD: {' '.join(cmd)}")
 
         start = time.time()
 
@@ -202,35 +330,109 @@ def serve_then_bench(task: BenchTask, port: int, host: str = "127.0.0.1"):
         duration = time.time() - start
 
         stop_event.set()
-        sampler_thread.join()
 
         if proc.returncode != 0:
-            write_task_log(task_id, f"[BENCH ERROR] {proc.returncode}")
-            task.status = "failed"
-            raise RuntimeError("Benchmark failed")
+            error_msg = f"Benchmark failed:\n{stderr[-1000:]}"
 
-        write_task_log(task_id, "[BENCH DONE]")
+            result = BenchResult(
+                config=cfg,
+                returncode=proc.returncode,
+                runtime_sec=duration,
+                metrics={},
+                error_msg=error_msg
+            )
+
+            task.result = result
+            task.status = "failed"
+
+            write_task_log(task_id, "[SERVE THEN BENCH]" + error_msg)
+
+            raise RuntimeError(error_msg)
 
         metrics = parse_metrics(task_id, stdout)
+        if metrics.get("successful_requests", 0) == 0:
+            error_msg = "Benchmark ran but no successful requests"
 
+            result = BenchResult(
+                config=cfg,
+                returncode=-1,
+                runtime_sec=duration,
+                metrics=metrics,
+                error_msg=error_msg
+            )
 
+            task.result = result
+            task.status = "failed"
+
+            write_task_log(task_id, "[SERVE THEN BENCH] " + error_msg)
+
+            return
+
+        # GPU metrics aggregation (unchanged)
         if gpu_samples:
-            metrics.update({
-                "avg_gpu_util_percent": sum(s["gpu_util_percent"] for s in gpu_samples) / len(gpu_samples),
-                "peak_gpu_util_percent": max(s["gpu_util_percent"] for s in gpu_samples),
-                "avg_gpu_mem_mb": sum(s["mem_used_mb"] for s in gpu_samples) / len(gpu_samples),
-                "peak_gpu_mem_mb": max(s["mem_used_mb"] for s in gpu_samples),
-            })
+            per_gpu_metrics = {}
+            all_utils = []
+            all_mems = []
+
+            for gid in gpu_ids:
+                util_vals = []
+                mem_vals = []
+
+                for sample in gpu_samples:
+                    gpu_data = sample["gpus"].get(str(gid))
+                    if gpu_data:
+                        util_vals.append(gpu_data["gpu_util_percent"])
+                        mem_vals.append(gpu_data["mem_used_mb"])
+
+                if util_vals:
+                    per_gpu_metrics[str(gid)] = {
+                        "avg_gpu_util_percent": sum(util_vals) / len(util_vals),
+                        "peak_gpu_util_percent": max(util_vals),
+                        "avg_gpu_mem_mb": sum(mem_vals) / len(mem_vals),
+                        "peak_gpu_mem_mb": max(mem_vals),
+                    }
+
+                    all_utils.extend(util_vals)
+                    all_mems.extend(mem_vals)
+
+            metrics["gpu_metrics"] = per_gpu_metrics
 
         write_benchmark_log(task, duration, proc.returncode, metrics, stderr, stdout)
+        write_task_log(task_id, "[SERVE THEN BENCH] Bench Successful")
 
+        result = BenchResult(
+            config=cfg,
+            returncode=proc.returncode,
+            runtime_sec=duration,
+            metrics=metrics,
+            error_msg=""
+        )
 
-        return {
-            "config": cfg.model_dump(),
-            "returncode": proc.returncode,
-            "runtime_sec": duration,
-            "metrics": metrics,
-        }
+        task.result = result
+        task.status = "completed"
+        
+
+        return
+
+    except Exception as e:
+        if not task.result:
+            error_msg = str(e)
+
+            result = BenchResult(
+                config=cfg,
+                returncode=-1,
+                runtime_sec=0,
+                metrics={},
+                error_msg=error_msg
+            )
+
+            task.result = result
+
+        task.status = "failed"
+
+        write_task_log(task_id, f"[SERVE THEN BENCH] FATAL ERROR {str(e)}")
+
+        return   
 
     finally:
         if server_proc:
