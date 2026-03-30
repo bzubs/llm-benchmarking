@@ -1,18 +1,13 @@
 import streamlit as st
-import json
 import pandas as pd
 import os
-import io
-import threading
 import time
 from datetime import datetime
-from contextlib import redirect_stdout
 from helper import fetch_hf_models, detect_model_type
 from resolver import CapabilityResolver
-from schema import BenchmarkConfig, BenchTaskResponse
+from schema import BenchmarkConfig, BenchTaskResponse, DType, Quant, GPUType
 from configs import MODEL_CONFIGS, PRESET_CONFIGS
 from login import show_auth_screen
-from typing import cast, Literal
 from dotenv import load_dotenv
 import requests
 
@@ -96,7 +91,7 @@ st.markdown(
     }
     </style>
     """,
-    unsafe_allow_html=True
+    unsafe_allow_html=True,
 )
 
 st.markdown(
@@ -138,7 +133,7 @@ st.markdown(
     }
     </style>
     """,
-    unsafe_allow_html=True
+    unsafe_allow_html=True,
 )
 
 with benchmark_tab:
@@ -188,7 +183,7 @@ with benchmark_tab:
                     </div>
                 </div>
                 """,
-                unsafe_allow_html=True
+                unsafe_allow_html=True,
             )
         with col2:
             if st.button("↩ Logout", key="logout", help="Logout"):
@@ -210,32 +205,23 @@ with benchmark_tab:
     Benchmark Configuration
     </h2>
     """,
-        unsafe_allow_html=True
+        unsafe_allow_html=True,
     )
-    #presets not integrated until
-    #preset = st.sidebar.radio(
-       # "Select Preset Config",
-       # (list(PRESET_CONFIGS.keys()) + ["Custom"]),
-       # help="Select a test from some pre-defined configs"
-    #)
 
-    #st.sidebar.markdown("-----")
-    with st.sidebar:
-        st.subheader("GPU Info")
-        st.markdown(f"Available GPUs: {n_gpus_available}")
-
+    st.sidebar.subheader("GPU Info")
+    st.sidebar.markdown(f"Available count of GPUs: {n_gpus_available}")
+    st.sidebar.markdown("-----")
 
     st.sidebar.subheader("Model Serving Parameters")
-    st.sidebar.info("All model params are automatically fetched and set. Over-riding these may enable unexpected behaviour.")
+    st.sidebar.info(
+        "All model params are automatically fetched and set. Over-riding these may enable unexpected behaviour."
+    )
 
     # Fetch HF models
     hf_models = fetch_hf_models()
 
     # Pre-configured models + HF models
-    model_choices = (
-        list(MODEL_CONFIGS.keys()) +
-        [m for m in hf_models]
-    )
+    model_choices = list(MODEL_CONFIGS.keys()) + [m for m in hf_models]
 
     model_name = st.sidebar.selectbox(
         "Model/Repo Name",
@@ -243,7 +229,7 @@ with benchmark_tab:
         help="""
     Select a pre-configured model or any Hugging Face text-generation model.
     [Browse on Hugging Face](https://huggingface.co/)
-    """
+    """,
     )
 
     # Custom implemented logic for resolving model params based on model_name
@@ -263,13 +249,15 @@ with benchmark_tab:
         dtype = st.selectbox(
             "Data Type",
             capabilities.supported_dtypes,
-            index=capabilities.supported_dtypes.index(
-                capabilities.default_dtype
-            ) if capabilities.default_dtype in capabilities.supported_dtypes else 0,
+            index=(
+                capabilities.supported_dtypes.index(capabilities.default_dtype)
+                if capabilities.default_dtype in capabilities.supported_dtypes
+                else 0
+            ),
             help="""
             Model precision
             [Learn more at Official Docs](https://docs.vllm.ai/en/latest/cli/serve/#-dtype)
-            """
+            """,
         )
 
     with col2:
@@ -278,7 +266,7 @@ with benchmark_tab:
             value=1,
             min_value=1,
             max_value=2,
-            help="Number of GPUs to Run Benchmark on"
+            help="Number of GPUs to Run Benchmark on",
         )
 
     # Auto-set max_model_len based on detection
@@ -290,7 +278,7 @@ with benchmark_tab:
             "Max Model Length",
             value=default_max_len,
             min_value=512,
-            help=f"Maximum sequence length (model supports up to {default_max_len:,})"
+            help=f"Maximum sequence length (model supports up to {default_max_len:,})",
         )
 
     with col2:
@@ -300,7 +288,7 @@ with benchmark_tab:
             index=0,
             help=f"""Available quantizations are fetched from Hugging Face model card
         [Learn more at Official Docs](https://docs.vllm.ai/en/latest/cli/serve/#-quantization-q)
-        """
+        """,
         )
 
     col1, col2 = st.sidebar.columns(2)
@@ -310,7 +298,7 @@ with benchmark_tab:
             value=1,
             min_value=1,
             help=f"""Tensor Parllel Size
-            [Learn More at Official Docs](https://docs.vllm.ai/en/latest/cli/serve/#-tensor-parallel-size-tp)"""
+            [Learn More at Official Docs](https://docs.vllm.ai/en/latest/cli/serve/#-tensor-parallel-size-tp)""",
         )
 
     with col2:
@@ -320,10 +308,10 @@ with benchmark_tab:
             min_value=1,
             help=f"""Data Parallel Size
         [Learn more at Official Docs](https://docs.vllm.ai/en/latest/cli/serve/#-data-parallel-size-dp)
-        """
+        """,
         )
-    
-    #validations for early exit
+
+    # validations for early exit
     total_required = tp_size * dp_size
 
     if total_required > n_gpus_available:
@@ -343,14 +331,13 @@ with benchmark_tab:
         )
         is_valid = False
 
-
     with st.sidebar:
         gpu_type = st.selectbox(
             "GPU Type",
             ["H100", "L4", "L40s"],
             index=0,
             help=f"""Available types of GPUs to run the benchmark on
-            """
+            """,
         )
 
     gpu_memory_util = st.sidebar.slider(
@@ -359,7 +346,7 @@ with benchmark_tab:
         max_value=1.0,
         value=0.85,
         step=0.05,
-        help="Target GPU memory utilization rate"
+        help="Target GPU memory utilization rate",
     )
 
     with st.sidebar:
@@ -377,7 +364,7 @@ with benchmark_tab:
         min_value=1,
         help=""" Number of requests sent throughout the run
             [Num requests](https://docs.vllm.ai/en/latest/cli/bench/serve/#-num-prompts)
-            """
+            """,
     )
 
     # num_concurrency suggests no of concurrent requests sent during a run
@@ -387,10 +374,8 @@ with benchmark_tab:
         min_value=1,
         help="""Number of requests processsed concurrently in the run
             [Max Concurrency](https://docs.vllm.ai/en/latest/cli/bench/serve/#-max-concurrency)
-            """
+            """,
     )
-
-    
 
     col1, col2 = st.sidebar.columns(2)
     with col1:
@@ -399,7 +384,7 @@ with benchmark_tab:
             value=32,
             min_value=16,
             help="""Number of input tokens
-                [Input-Len](https://docs.vllm.ai/en/latest/cli/bench/serve/#-input-len)"""
+                [Input-Len](https://docs.vllm.ai/en/latest/cli/bench/serve/#-input-len)""",
         )
 
     with col2:
@@ -409,13 +394,13 @@ with benchmark_tab:
             min_value=16,
             help="""Number of output tokens
                 [Output-Len](https://docs.vllm.ai/en/latest/cli/bench/serve/#-output-len)
-                """
+                """,
         )
-    
+
     use_unbounded = st.sidebar.checkbox(
         "Enable Default Request Rate",
         value=True,
-        help="If enabled, request rate is set to default value and handled by vLLM"
+        help="If enabled, request rate is set to default value and handled by vLLM",
     )
 
     # Validations warning to help early exit
@@ -432,12 +417,10 @@ with benchmark_tab:
             "Request Rate (req/sec)",
             value=1,
             min_value=1,
-            help="Number of requests per second"
+            help="Number of requests per second",
         )
     else:
         request_rate = None
-
-    
 
     st.sidebar.markdown("---")
 
@@ -498,10 +481,7 @@ with benchmark_tab:
         button_disabled = not is_valid
 
         run_button = st.button(
-            "Run Benchmark",
-            width="stretch",
-            type="primary",
-            disabled=button_disabled
+            "Run Benchmark", width="stretch", type="primary", disabled=button_disabled
         )
 
     st.markdown("---")
@@ -516,32 +496,28 @@ with benchmark_tab:
         st.session_state.benchmark_requested = False
 
         # Create tabs for results display
-        tab1, tab2, tab3, tab4, tab5 = st.tabs([
-            "Results",
-            "Configuration",
-            "Stdout",
-            "Debug",
-            "Logs"
-        ])
+        tab1, tab2, tab3, tab4, tab5 = st.tabs(
+            ["Results", "Configuration", "Stdout", "Debug", "Logs"]
+        )
 
         try:
             # Create benchmark config
             cfg = BenchmarkConfig(
                 username=str(st.session_state.username),
                 model_name=model_name,
-                dtype=dtype,
+                dtype=DType(dtype),
                 max_model_len=max_model_len,
                 input_len=input_len,
                 output_len=output_len,
                 num_prompts=num_prompts,
                 gpu_memory_util=gpu_memory_util,
                 n_gpus_required=n_gpus_required,
-                quantization=quantization,
+                quantization=Quant(quantization),
                 max_concurrency=num_concurrency,
                 tp_size=tp_size,
                 dp_size=dp_size,
-                request_rate = request_rate,
-                gpu_type = gpu_type
+                request_rate=request_rate,
+                gpu_type=GPUType(gpu_type),
             )
 
             # Submit to backend
@@ -552,13 +528,15 @@ with benchmark_tab:
 
             data = resp.json()
 
+            data = BenchTaskResponse(**data)
+
             task_id = data.id
             status = data.status
-            assigned_gpu = data.gpu_assigned
+            gpu_assigned = data.gpu_assigned
 
             status_holder = st.info(
                 f"Your Benchmarking Task has been acknowledged. Task ID is {task_id}. "
-                f"It has been scheduled to GPU {assigned_gpu if assigned_gpu else ""}"
+                f"It has been scheduled to GPU {gpu_assigned}"
             )
 
             progress_bar = st.progress(0)
@@ -572,7 +550,9 @@ with benchmark_tab:
 
             while True:
                 if time.time() - start_time > TIMEOUT:
-                    progress_text.error("Timeout exceeded for polling. No response from backend")
+                    progress_text.error(
+                        "Timeout exceeded for polling. No response from backend"
+                    )
                     break
                 try:
                     res = requests.get(f"{BACKEND_URL}/status/{task_id}", timeout=2)
@@ -582,20 +562,19 @@ with benchmark_tab:
                         break
 
                     data = res.json()
+                    data = BenchTaskResponse(**data)
+
                     status = data.status
 
                     # ---- STATUS HANDLING ----
                     if status == "queued":
                         if data.gpu_assigned:
                             progress_text.info(
-                            f"Your task has been queued for GPU ID/s: {data.gpu_assigned}"
-                        )
+                                f"Your task has been queued for GPU ID/s: {data.gpu_assigned}"
+                            )
                         else:
-                            progress_text.info(
-                            f"Your task has been queued"
-                        )
+                            progress_text.info(f"Your task has been queued")
 
-                        
                         progress_value = min(progress_value + 0.02, 0.2)
 
                     elif status == "assigned":
@@ -613,9 +592,7 @@ with benchmark_tab:
                         progress_bar.progress(1.0)
                         progress_text.success("Benchmark Completed!")
 
-                        data = BenchTaskResponse(**data)
                         result = data.result
-
                         break
 
                     elif status == "failed":
@@ -633,6 +610,8 @@ with benchmark_tab:
 
             status_holder.empty()
 
+            #append jsonl history here;
+
             metrics = result.metrics if result else {}
 
             with tab1:
@@ -646,27 +625,45 @@ with benchmark_tab:
                     st.info("Check Logs / Stdout tabs for more context.")
                 else:
                     st.subheader("Benchmark Metrics")
-                    if metrics and len(metrics.keys())> 0:
+                    if metrics and len(metrics.keys()) > 0:
                         # Display metrics in a more organized way
                         col1, col2 = st.columns(2)
 
                         with col1:
                             st.write("**Request Metrics**")
                             if "successful_requests" in metrics:
-                                st.metric("Successful Requests", int(metrics["successful_requests"]))
+                                st.metric(
+                                    "Successful Requests",
+                                    int(metrics["successful_requests"]),
+                                )
                             if "benchmark_duration_sec" in metrics:
-                                st.metric("Duration (s)", f"{metrics['benchmark_duration_sec']:.2f}")
+                                st.metric(
+                                    "Duration (s)",
+                                    f"{metrics['benchmark_duration_sec']:.2f}",
+                                )
                             if "request_throughput" in metrics:
-                                st.metric("Request Throughput (req/s)", f"{metrics['request_throughput']:.2f}")
+                                st.metric(
+                                    "Request Throughput (req/s)",
+                                    f"{metrics['request_throughput']:.2f}",
+                                )
 
                         with col2:
                             st.write("**Token Metrics**")
                             if "total_input_tokens" in metrics:
-                                st.metric("Total Input Tokens", int(metrics["total_input_tokens"]))
+                                st.metric(
+                                    "Total Input Tokens",
+                                    int(metrics["total_input_tokens"]),
+                                )
                             if "total_generated_tokens" in metrics:
-                                st.metric("Total Generated Tokens", int(metrics["total_generated_tokens"]))
+                                st.metric(
+                                    "Total Generated Tokens",
+                                    int(metrics["total_generated_tokens"]),
+                                )
                             if "total_token_throughput" in metrics:
-                                st.metric("Total Token Throughput (tok/s)", f"{metrics['total_token_throughput']:.2f}")
+                                st.metric(
+                                    "Total Token Throughput (tok/s)",
+                                    f"{metrics['total_token_throughput']:.2f}",
+                                )
 
                         st.divider()
 
@@ -677,19 +674,19 @@ with benchmark_tab:
                             st.write("**Time to First Token (TTFT) - ms**")
                             if "median_ttft_ms" in metrics:
                                 st.metric("Median", f"{metrics['median_ttft_ms']:.2f}")
-                            #if "p99_ttft_ms" in metrics:
-                                #st.metric("P99", f"{metrics['p99_ttft_ms']:.2f}")
-                            #if "p95_ttft_ms" in metrics:
-                                #st.metric("P95", f"{metrics['p95_ttft_ms']:.2f}")
+                            # if "p99_ttft_ms" in metrics:
+                            # st.metric("P99", f"{metrics['p99_ttft_ms']:.2f}")
+                            # if "p95_ttft_ms" in metrics:
+                            # st.metric("P95", f"{metrics['p95_ttft_ms']:.2f}")
 
                         with col2:
                             st.write("**Time Per Output Token (TPOT) - ms**")
                             if "median_tpot_ms" in metrics:
                                 st.metric("Median", f"{metrics['median_tpot_ms']:.2f}")
-                            #if "p99_tpot_ms" in metrics:
-                                #st.metric("P99", f"{metrics['p99_tpot_ms']:.2f}")
-                            #if "p95_tpot_ms" in metrics:
-                                #st.metric("P95", f"{metrics['p95_tpot_ms']:.2f}")
+                            # if "p99_tpot_ms" in metrics:
+                            # st.metric("P99", f"{metrics['p99_tpot_ms']:.2f}")
+                            # if "p95_tpot_ms" in metrics:
+                            # st.metric("P95", f"{metrics['p95_tpot_ms']:.2f}")
 
                         col3, col4 = st.columns(2)
 
@@ -697,25 +694,25 @@ with benchmark_tab:
                             st.write("**Inter-token Latency (ITL) - ms**")
                             if "median_itl_ms" in metrics:
                                 st.metric("Median", f"{metrics['median_itl_ms']:.2f}")
-                            #if "p99_itl_ms" in metrics:
-                                #st.metric("P99", f"{metrics['p99_itl_ms']:.2f}")
-                            #if "p95_itl_ms" in metrics:
-                                #st.metric("P95", f"{metrics['p95_itl_ms']:.2f}")
+                            # if "p99_itl_ms" in metrics:
+                            # st.metric("P99", f"{metrics['p99_itl_ms']:.2f}")
+                            # if "p95_itl_ms" in metrics:
+                            # st.metric("P95", f"{metrics['p95_itl_ms']:.2f}")
 
                         with col4:
                             st.write("**End-to-End Latency (E2EL) - ms**")
                             if "median_e2el_ms" in metrics:
                                 st.metric("Median", f"{metrics['median_e2el_ms']:.2f}")
-                            #if "p99_e2el_ms" in metrics:
-                                #st.metric("P99", f"{metrics['p99_e2el_ms']:.2f}")
-                            #if "p95_e2el_ms" in metrics:
-                                #st.metric("P95", f"{metrics['p95_e2el_ms']:.2f}")
-                        
-                        #gpu_metrics deprecated in v6+
-                        #st.divider()
-                        #st.subheader("GPU Metrics")
+                            # if "p99_e2el_ms" in metrics:
+                            # st.metric("P99", f"{metrics['p99_e2el_ms']:.2f}")
+                            # if "p95_e2el_ms" in metrics:
+                            # st.metric("P95", f"{metrics['p95_e2el_ms']:.2f}")
 
-                        #gpu_metrics = metrics.get("gpu_metrics", {})
+                        # gpu_metrics deprecated in v6+
+                        # st.divider()
+                        # st.subheader("GPU Metrics")
+
+                        # gpu_metrics = metrics.get("gpu_metrics", {})
                     else:
                         st.warning("No metrics were extracted. Check Logs on Server")
 
@@ -729,48 +726,42 @@ with benchmark_tab:
                     config = result.config
                     st.json(config)
                 else:
-                    st.warning("No configuration available because the benchmark did not complete.")
+                    st.warning(
+                        "No configuration available because the benchmark did not complete."
+                    )
 
             with tab3:
                 st.subheader("Raw Stdout Output")
 
-                log_path = f"summary/{task_id}_summary.log"
+                bench_logs = ""
 
-                if os.path.exists(log_path):
-                    with open(log_path, "r") as f:
-                        stdout = f.read()
+                if result:
+                    bench_logs = result.bench_logs
 
-                    if stdout:
-                        st.code(stdout[-3000:], language="text")
-                    else:
-                        st.write("STDOUT file is empty")
+                if bench_logs != "":
+                    st.code(bench_logs, language="text")
                 else:
-                    st.write("No STDOUT file found for this task")
+                    st.write("No Logs to display for this task. Likely Failure")
 
             with tab4:
-                st.subheader("Debug Information")
-                st.write(f"**Metrics Found**: {len(metrics)}")
-                st.write(f"**Metrics Keys**: {list(metrics.keys())}")
-                st.write("**Full Metrics Dictionary**:")
-                st.json(metrics if metrics else {"message": "No metrics extracted"})
-
+                if metrics:
+                    st.subheader("Debug Information")
+                    st.write(f"**Metrics Found**: {len(metrics)}")
+                    st.write(f"**Metrics Keys**: {list(metrics.keys())}")
+                    st.write("**Full Metrics Dictionary**:")
+                    st.json(metrics if metrics else {"message": "No metrics extracted"})
 
             with tab5:
                 st.subheader("Process Logs")
+                process_logs = ""
 
-                log_path = f"logs/task_{task_id}.log"
+                if result:
+                    process_logs = result.process_logs
 
-                if os.path.exists(log_path):
-                    with open(log_path, "r") as f:
-                        stdout = f.read()
-
-                    if stdout:
-                        st.code(stdout[-3000:], language="text")
-                    else:
-                        st.write("Process Log file is empty")
+                if process_logs != "":
+                    st.code(process_logs, language="text")
                 else:
-                    st.write("No Process log file found for this task")
-
+                    st.write("No Logs to display for this task. Likely Failure")
             # Export results button
             st.divider()
             st.subheader("Export Results")
@@ -783,7 +774,7 @@ with benchmark_tab:
                         label="Download as JSON",
                         data=json_str,
                         file_name=f"benchmark_{model_name.replace('/', '_')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-                        mime="application/json"
+                        mime="application/json",
                     )
 
                 with col2:
@@ -791,7 +782,7 @@ with benchmark_tab:
                     if result.metrics:
                         csv_data = "Metric,Value\n"
                         for k, v in result.metrics.items():
-                            if k=="gpu_metrics":
+                            if k == "gpu_metrics":
                                 continue
                             csv_data += f"{k},{v}\n"
 
@@ -799,7 +790,7 @@ with benchmark_tab:
                             label="Download Metrics as CSV",
                             data=csv_data,
                             file_name=f"metrics_{model_name.replace('/', '_')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                            mime="text/csv"
+                            mime="text/csv",
                         )
             else:
                 st.info("Export is available only for successful benchmark runs.")
@@ -809,6 +800,7 @@ with benchmark_tab:
             st.error("Stack trace:")
             st.code(str(e), language="text")
             import traceback
+
             st.code(traceback.format_exc(), language="text")
         finally:
             # Reset benchmark running flag
@@ -823,7 +815,7 @@ with benchmark_tab:
         vLLM Benchmark Tool | ©️2026
         </div>
         """,
-        unsafe_allow_html=True
+        unsafe_allow_html=True,
     )
 
 # RUN HISTORY TAB
@@ -844,15 +836,14 @@ with history_tab:
         rename_map = {
             "taskID": "task_id",
             "task_status": "status",
-            "return_code": "returncode"
+            "return_code": "returncode",
         }
         df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
 
         # Username filter (include nulls if needed)
         if "username" in df.columns:
             df = df[
-                (df["username"] == st.session_state.username) |
-                (df["username"].isna())
+                (df["username"] == st.session_state.username) | (df["username"].isna())
             ]
 
     except Exception as e:
@@ -891,18 +882,11 @@ with history_tab:
         model_options = sorted(df["model"].dropna().unique().tolist())
         model_options.insert(0, "All Models")
 
-        selected_model = st.selectbox(
-            "Filter by Model",
-            options=model_options,
-            index=0
-        )
+        selected_model = st.selectbox("Filter by Model", options=model_options, index=0)
 
     with col2:
         min_throughput = st.number_input(
-            "Min Throughput (req/sec)",
-            min_value=0.0,
-            value=0.0,
-            step=1.0
+            "Min Throughput (req/sec)", min_value=0.0, value=0.0, step=1.0
         )
 
     col3, col4 = st.columns(2)
@@ -911,19 +895,13 @@ with history_tab:
         if "timestamp" in df.columns:
             date_range = st.date_input(
                 "Filter by Date Range",
-                value=(
-                    df["timestamp"].min().date(),
-                    df["timestamp"].max().date()
-                )
+                value=(df["timestamp"].min().date(), df["timestamp"].max().date()),
             )
         else:
             date_range = None
 
     with col4:
-        gpu_threshold = st.slider(
-            "Min Avg GPU Utilization (%)",
-            0, 100, 0
-        )
+        gpu_threshold = st.slider("Min Avg GPU Utilization (%)", 0, 100, 0)
 
     # ------------------------
     # Apply Filters
@@ -932,9 +910,7 @@ with history_tab:
 
     # Model filter
     if selected_model != "All Models":
-        filtered_df = filtered_df[
-            filtered_df["model"] == selected_model
-        ]
+        filtered_df = filtered_df[filtered_df["model"] == selected_model]
 
     # Throughput filter (FIXED)
     throughput_col = None
@@ -955,11 +931,16 @@ with history_tab:
         ]
 
     # Date filter
-    if date_range and isinstance(date_range, tuple) and "timestamp" in filtered_df.columns:
+    if (
+        isinstance(date_range, tuple)
+        and len(date_range) == 2
+        and "timestamp" in filtered_df.columns
+    ):
         start_date, end_date = date_range
+
         filtered_df = filtered_df[
-            (filtered_df["timestamp"].dt.date >= start_date) &
-            (filtered_df["timestamp"].dt.date <= end_date)
+            (filtered_df["timestamp"].dt.date >= start_date)
+            & (filtered_df["timestamp"].dt.date <= end_date)
         ]
 
     st.divider()
@@ -969,10 +950,6 @@ with history_tab:
     # ------------------------
     st.write(f"### Showing {len(filtered_df)} runs")
 
-    st.dataframe(
-        filtered_df,
-        width='stretch',
-        hide_index=True
-    )
+    st.dataframe(filtered_df, width="stretch", hide_index=True)
 
     st.divider()
