@@ -3,8 +3,6 @@ import time
 import requests
 from runner import serve_then_bench
 from schema import BenchResult
-from writer import append_jsonl_history
-
 
 class TaskExecutor:
     def __init__(self, cluster, scheduler):
@@ -64,22 +62,14 @@ class TaskExecutor:
             )
 
         #persist
-        append_jsonl_history(
-            task,
-            task.result.runtime_sec if task.result else 0,
-            task.result.returncode if task.result else -1,
-            task.result.metrics if task.result else {}
-        )
+        # record = append_jsonl_history(
+        #     task,
+        #     task.result.runtime_sec if task.result else 0,
+        #     task.result.returncode if task.result else -1,
+        #     task.result.metrics if task.result else {}
+        # )
 
-        requests.post(
-            f"http://{ROUTER_IP}:{PORT}/log",
-            json={
-                "task": task.model_dump(),
-                "runtime_sec": task.result.runtime_sec if task.result else 0,
-                "returncode": task.result.returncode if task.result else -1,
-                "metrics": task.result.metrics if task.result else {}
-            }
-        )
+        #task.result.run_logs = record
 
         # release all GPUs
         self.cluster.release_gpus(gpu_ids)
