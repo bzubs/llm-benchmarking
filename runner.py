@@ -7,7 +7,8 @@ import os
 from typing import List
 
 from schema import BenchmarkConfig, BenchTask, BenchResult
-from writer import write_task_log, write_benchmark_log
+from writer import write_task_log, write_benchmark_log, get_last_log_block
+
 import threading
 
 from pynvml import (
@@ -173,12 +174,12 @@ def start_vllm_server(task: BenchTask, gpu_ids: list[int], port: int, host: str 
         "vllm", "serve", cfg.model_name,
         "--host", host,
         "--port", str(port),
-        "--dtype", str(cfg.dtype),
+        "--dtype", cfg.dtype.value,
         "--max-model-len", str(cfg.max_model_len),
     ]
 
     if cfg.quantization != "none":
-        cmd += ["--quantization", str(cfg.quantization)]
+        cmd += ["--quantization", cfg.quantization.value]
     if cfg.tp_size > 1:
         cmd += ["--tensor-parallel-size", str(cfg.tp_size)]
     if cfg.dp_size > 1:
@@ -188,7 +189,7 @@ def start_vllm_server(task: BenchTask, gpu_ids: list[int], port: int, host: str 
 
     write_task_log(task_id, "=" * 80)
     write_task_log(task_id, f"[START SERVER] CMD FORMED {' '.join(cmd)}")
-    write_task_log(task_id, f"[GPU CONFIG] FOUND GPUs: {gpu_ids}")
+    write_task_log(task_id, f"[GPU CONFIG] USING GPUs: {gpu_ids}")
 
     proc = subprocess.Popen(
         cmd,
@@ -397,7 +398,7 @@ def serve_then_bench(task: BenchTask, port: int, host: str = "127.0.0.1"):
 
             metrics["gpu_metrics"] = per_gpu_metrics
 
-        write_benchmark_log(task, duration, proc.returncode, metrics, stderr, stdout)
+        bench_logs = write_benchmark_log(task, duration, proc.returncode, metrics, stderr, stdout)
         write_task_log(task_id, "[SERVE THEN BENCH] Bench Successful")
 
         result = BenchResult(
@@ -409,7 +410,12 @@ def serve_then_bench(task: BenchTask, port: int, host: str = "127.0.0.1"):
         )
 
         task.result = result
+        task.result.bench_logs = bench_logs
+        process_logs = get_last_log_block("process.log")
+        task.result.process_logs = process_logs
         task.status = "completed"
+        
+
         
 
         return
