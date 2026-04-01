@@ -1,0 +1,2 @@
+backend_port: 8023
+gpu_ids : [6, 7]
