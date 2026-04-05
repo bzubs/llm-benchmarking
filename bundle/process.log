@@ -1,0 +1,32 @@
+[2026-03-31 13:23:37] ================================================================================
+[2026-03-31 13:23:37] [START SERVER] CMD FORMED vllm serve gpt2 --host 127.0.0.1 --port 8006 --dtype auto --max-model-len 1024
+[2026-03-31 13:23:37] [GPU CONFIG] USING GPUs: [6]
+[2026-03-31 13:24:08] [START SERVER] vLLM Server Ready
+[2026-03-31 13:24:08] [SERVE THEN BENCH] CMD: vllm bench serve --backend vllm --model gpt2 --host 127.0.0.1 --port 8006 --num-prompts 10 --random-input-len 32 --random-output-len 32 --max-concurrency 1 --percentile-metrics e2el,tpot,ttft,itl --metric-percentiles 95,99
+[2026-03-31 13:24:17] [PARSE METRICS] Parsing Successful
+[2026-03-31 13:24:17] [SERVE THEN BENCH] Bench Successful
+[2026-03-31 13:24:17] [CLEANUP] Terminating server
+[2026-03-31 13:33:34] ================================================================================
+[2026-03-31 13:33:34] [START SERVER] CMD FORMED vllm serve gpt2 --host 127.0.0.1 --port 8006 --dtype auto --max-model-len 1024
+[2026-03-31 13:33:34] [GPU CONFIG] USING GPUs: [6]
+[2026-03-31 13:34:07] [START SERVER] vLLM Server Ready
+[2026-03-31 13:34:07] [SERVE THEN BENCH] CMD: vllm bench serve --backend vllm --model gpt2 --host 127.0.0.1 --port 8006 --num-prompts 10 --random-input-len 32 --random-output-len 32 --max-concurrency 1 --percentile-metrics e2el,tpot,ttft,itl --metric-percentiles 95,99
+[2026-03-31 13:34:17] [PARSE METRICS] Parsing Successful
+[2026-03-31 13:34:17] [SERVE THEN BENCH] Bench Successful
+[2026-03-31 13:34:17] [CLEANUP] Terminating server
+[2026-03-31 16:18:20] ================================================================================
+[2026-03-31 16:18:20] [START SERVER] CMD FORMED vllm serve gpt2 --host 127.0.0.1 --port 8006 --dtype auto --max-model-len 1024
+[2026-03-31 16:18:20] [GPU CONFIG] USING GPUs: [6]
+[2026-03-31 16:18:49] ================================================================================
+[2026-03-31 16:18:49] [START SERVER] CMD FORMED vllm serve gpt2 --host 127.0.0.1 --port 8007 --dtype auto --max-model-len 1024
+[2026-03-31 16:18:49] [GPU CONFIG] USING GPUs: [7]
+[2026-03-31 16:18:53] [START SERVER] vLLM Server Ready
+[2026-03-31 16:18:53] [SERVE THEN BENCH] CMD: vllm bench serve --backend vllm --model gpt2 --host 127.0.0.1 --port 8006 --num-prompts 10 --random-input-len 32 --random-output-len 32 --max-concurrency 1 --percentile-metrics e2el,tpot,ttft,itl --metric-percentiles 95,99
+[2026-03-31 16:19:02] [PARSE METRICS] Parsing Successful
+[2026-03-31 16:19:02] [SERVE THEN BENCH] Bench Successful
+[2026-03-31 16:19:02] [CLEANUP] Terminating server
+[2026-03-31 16:19:20] [START SERVER] vLLM Server Ready
+[2026-03-31 16:19:20] [SERVE THEN BENCH] CMD: vllm bench serve --backend vllm --model gpt2 --host 127.0.0.1 --port 8007 --num-prompts 10 --random-input-len 32 --random-output-len 32 --max-concurrency 1 --percentile-metrics e2el,tpot,ttft,itl --metric-percentiles 95,99
+[2026-03-31 16:19:29] [PARSE METRICS] Parsing Successful
+[2026-03-31 16:19:29] [SERVE THEN BENCH] Bench Successful
+[2026-03-31 16:19:29] [CLEANUP] Terminating server

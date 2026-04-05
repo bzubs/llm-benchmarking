@@ -1,0 +1,393 @@
+
+    ====================================================================================================================================================================================
+    Timestamp: 2026-03-31 13:24:17
+    Model: gpt2
+    GPU ID: [6]
+    Runtime: 9.04 seconds
+    Return Code: 0
+
+    Configuration:
+    {
+  "benchmark_mode": "Online (Real-time Serving)",
+  "benchmark_type": "serve",
+  "username": "adi11",
+  "model_name": "gpt2",
+  "dtype": "auto",
+  "max_model_len": 1024,
+  "quantization": "none",
+  "dataset_name": "random",
+  "input_len": 32,
+  "output_len": 32,
+  "num_prompts": 10,
+  "max_concurrency": 1,
+  "request_rate": null,
+  "backend": "vllm",
+  "endpoint": "/v1/completions",
+  "host": "localhost",
+  "port": "8006",
+  "gpu_type": "H100",
+  "gpu_memory_util": 0.85,
+  "n_gpus_required": 1,
+  "dp_size": 1,
+  "tp_size": 1
+}
+
+    Metrics (19 found):
+    {
+  "successful_requests": 10,
+  "benchmark_duration_sec": 0.38,
+  "total_input_tokens": 320,
+  "total_generated_tokens": 320,
+  "request_throughput": 26.16,
+  "total_token_throughput": 1674.25,
+  "median_ttft_ms": 8.42,
+  "p99_ttft_ms": 39.34,
+  "p95_ttft_ms": 28.76,
+  "median_tpot_ms": 0.84,
+  "p99_tpot_ms": 0.87,
+  "p95_tpot_ms": 0.86,
+  "median_itl_ms": 0.84,
+  "p99_itl_ms": 1.07,
+  "p95_itl_ms": 0.98,
+  "median_e2el_ms": 34.44,
+  "p99_e2el_ms": 66.26,
+  "p95_e2el_ms": 55.22,
+  "gpu_metrics": {
+    "6": {
+      "avg_gpu_util_percent": 0.7150837988826816,
+      "peak_gpu_util_percent": 30,
+      "avg_gpu_mem_mb": 74400.49581005587,
+      "peak_gpu_mem_mb": 74404.25
+    }
+  }
+}
+
+    Stderr Output (last 1000 chars):
+    /home/aditya.veerkar/envs/newenv/lib/python3.12/site-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+
+  0%|          | 0/10 [00:00<?, ?it/s]
+ 20%|██        | 2/10 [00:00<00:00, 18.57it/s]
+ 50%|█████     | 5/10 [00:00<00:00, 24.63it/s]
+ 80%|████████  | 8/10 [00:00<00:00, 26.66it/s]
+100%|██████████| 10/10 [00:00<00:00, 26.16it/s]
+
+
+    Stdout Output (last 1000 chars):
+         12.05     
+Median TTFT (ms):                        8.42      
+P95 TTFT (ms):                           28.76     
+P99 TTFT (ms):                           39.34     
+-----Time per Output Token (excl. 1st token)------
+Mean TPOT (ms):                          0.84      
+Median TPOT (ms):                        0.84      
+P95 TPOT (ms):                           0.86      
+P99 TPOT (ms):                           0.87      
+---------------Inter-token Latency----------------
+Mean ITL (ms):                           0.84      
+Median ITL (ms):                         0.84      
+P95 ITL (ms):                            0.98      
+P99 ITL (ms):                            1.07      
+----------------End-to-end Latency----------------
+Mean E2EL (ms):                          38.11     
+Median E2EL (ms):                        34.44     
+P95 E2EL (ms):                           55.22     
+P99 E2EL (ms):                           66.26     
+==================================================
+
+    ====================================================================================================================================================================================
+    
+    ====================================================================================================================================================================================
+    Timestamp: 2026-03-31 13:34:17
+    Model: gpt2
+    GPU ID: [6]
+    Runtime: 9.50 seconds
+    Return Code: 0
+
+    Configuration:
+    {
+  "benchmark_mode": "Online (Real-time Serving)",
+  "benchmark_type": "serve",
+  "username": "adi11",
+  "model_name": "gpt2",
+  "dtype": "auto",
+  "max_model_len": 1024,
+  "quantization": "none",
+  "dataset_name": "random",
+  "input_len": 32,
+  "output_len": 32,
+  "num_prompts": 10,
+  "max_concurrency": 1,
+  "request_rate": null,
+  "backend": "vllm",
+  "endpoint": "/v1/completions",
+  "host": "localhost",
+  "port": "8006",
+  "gpu_type": "H100",
+  "gpu_memory_util": 0.85,
+  "n_gpus_required": 1,
+  "dp_size": 1,
+  "tp_size": 1
+}
+
+    Metrics (19 found):
+    {
+  "successful_requests": 10,
+  "benchmark_duration_sec": 0.4,
+  "total_input_tokens": 320,
+  "total_generated_tokens": 320,
+  "request_throughput": 24.82,
+  "total_token_throughput": 1588.47,
+  "median_ttft_ms": 8.16,
+  "p99_ttft_ms": 45.87,
+  "p95_ttft_ms": 31.3,
+  "median_tpot_ms": 0.9,
+  "p99_tpot_ms": 0.91,
+  "p95_tpot_ms": 0.91,
+  "median_itl_ms": 0.91,
+  "p99_itl_ms": 1.17,
+  "p95_itl_ms": 1.06,
+  "median_e2el_ms": 36.11,
+  "p99_e2el_ms": 72.68,
+  "p95_e2el_ms": 58.6,
+  "gpu_metrics": {
+    "6": {
+      "avg_gpu_util_percent": 1.3617021276595744,
+      "peak_gpu_util_percent": 49,
+      "avg_gpu_mem_mb": 74400.50531914894,
+      "peak_gpu_mem_mb": 74404.25
+    }
+  }
+}
+
+    Stderr Output (last 1000 chars):
+    /home/aditya.veerkar/envs/newenv/lib/python3.12/site-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+
+  0%|          | 0/10 [00:00<?, ?it/s]
+ 20%|██        | 2/10 [00:00<00:00, 17.62it/s]
+ 50%|█████     | 5/10 [00:00<00:00, 23.34it/s]
+ 80%|████████  | 8/10 [00:00<00:00, 25.33it/s]
+100%|██████████| 10/10 [00:00<00:00, 24.82it/s]
+
+
+    Stdout Output (last 1000 chars):
+         12.36     
+Median TTFT (ms):                        8.16      
+P95 TTFT (ms):                           31.30     
+P99 TTFT (ms):                           45.87     
+-----Time per Output Token (excl. 1st token)------
+Mean TPOT (ms):                          0.90      
+Median TPOT (ms):                        0.90      
+P95 TPOT (ms):                           0.91      
+P99 TPOT (ms):                           0.91      
+---------------Inter-token Latency----------------
+Mean ITL (ms):                           0.90      
+Median ITL (ms):                         0.91      
+P95 ITL (ms):                            1.06      
+P99 ITL (ms):                            1.17      
+----------------End-to-end Latency----------------
+Mean E2EL (ms):                          40.19     
+Median E2EL (ms):                        36.11     
+P95 E2EL (ms):                           58.60     
+P99 E2EL (ms):                           72.68     
+==================================================
+
+    ====================================================================================================================================================================================
+    
+    ====================================================================================================================================================================================
+    Timestamp: 2026-03-31 16:19:02
+    Model: gpt2
+    GPU ID: [6]
+    Runtime: 9.69 seconds
+    Return Code: 0
+
+    Configuration:
+    {
+  "benchmark_mode": "Online (Real-time Serving)",
+  "benchmark_type": "serve",
+  "username": "adi11",
+  "model_name": "gpt2",
+  "dtype": "auto",
+  "max_model_len": 1024,
+  "quantization": "none",
+  "dataset_name": "random",
+  "input_len": 32,
+  "output_len": 32,
+  "num_prompts": 10,
+  "max_concurrency": 1,
+  "request_rate": null,
+  "backend": "vllm",
+  "endpoint": "/v1/completions",
+  "host": "localhost",
+  "port": "8006",
+  "gpu_type": "H100",
+  "gpu_memory_util": 0.85,
+  "n_gpus_required": 1,
+  "dp_size": 1,
+  "tp_size": 1
+}
+
+    Metrics (19 found):
+    {
+  "successful_requests": 10,
+  "benchmark_duration_sec": 0.48,
+  "total_input_tokens": 320,
+  "total_generated_tokens": 320,
+  "request_throughput": 20.99,
+  "total_token_throughput": 1343.47,
+  "median_ttft_ms": 10.49,
+  "p99_ttft_ms": 39.39,
+  "p95_ttft_ms": 28.21,
+  "median_tpot_ms": 1.17,
+  "p99_tpot_ms": 1.19,
+  "p95_tpot_ms": 1.18,
+  "median_itl_ms": 1.19,
+  "p99_itl_ms": 1.86,
+  "p95_itl_ms": 1.35,
+  "median_e2el_ms": 46.91,
+  "p99_e2el_ms": 66.86,
+  "p95_e2el_ms": 59.36,
+  "gpu_metrics": {
+    "6": {
+      "avg_gpu_util_percent": 1.8541666666666667,
+      "peak_gpu_util_percent": 38,
+      "avg_gpu_mem_mb": 74400.58333333333,
+      "peak_gpu_mem_mb": 74404.25
+    }
+  }
+}
+
+    Stderr Output (last 1000 chars):
+    /home/aditya.veerkar/envs/newenv/lib/python3.12/site-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+
+  0%|          | 0/10 [00:00<?, ?it/s]
+ 20%|██        | 2/10 [00:00<00:00, 17.63it/s]
+ 50%|█████     | 5/10 [00:00<00:00, 19.87it/s]
+ 80%|████████  | 8/10 [00:00<00:00, 20.47it/s]
+100%|██████████| 10/10 [00:00<00:00, 21.00it/s]
+
+
+    Stdout Output (last 1000 chars):
+         13.44     
+Median TTFT (ms):                        10.49     
+P95 TTFT (ms):                           28.21     
+P99 TTFT (ms):                           39.39     
+-----Time per Output Token (excl. 1st token)------
+Mean TPOT (ms):                          1.09      
+Median TPOT (ms):                        1.17      
+P95 TPOT (ms):                           1.18      
+P99 TPOT (ms):                           1.19      
+---------------Inter-token Latency----------------
+Mean ITL (ms):                           1.11      
+Median ITL (ms):                         1.19      
+P95 ITL (ms):                            1.35      
+P99 ITL (ms):                            1.86      
+----------------End-to-end Latency----------------
+Mean E2EL (ms):                          47.35     
+Median E2EL (ms):                        46.91     
+P95 E2EL (ms):                           59.36     
+P99 E2EL (ms):                           66.86     
+==================================================
+
+    ====================================================================================================================================================================================
+    
+    ====================================================================================================================================================================================
+    Timestamp: 2026-03-31 16:19:29
+    Model: gpt2
+    GPU ID: [7]
+    Runtime: 8.99 seconds
+    Return Code: 0
+
+    Configuration:
+    {
+  "benchmark_mode": "Online (Real-time Serving)",
+  "benchmark_type": "serve",
+  "username": "adi11",
+  "model_name": "gpt2",
+  "dtype": "auto",
+  "max_model_len": 1024,
+  "quantization": "none",
+  "dataset_name": "random",
+  "input_len": 32,
+  "output_len": 32,
+  "num_prompts": 10,
+  "max_concurrency": 1,
+  "request_rate": null,
+  "backend": "vllm",
+  "endpoint": "/v1/completions",
+  "host": "localhost",
+  "port": "8007",
+  "gpu_type": "H100",
+  "gpu_memory_util": 0.85,
+  "n_gpus_required": 1,
+  "dp_size": 1,
+  "tp_size": 1
+}
+
+    Metrics (19 found):
+    {
+  "successful_requests": 10,
+  "benchmark_duration_sec": 0.42,
+  "total_input_tokens": 320,
+  "total_generated_tokens": 320,
+  "request_throughput": 23.62,
+  "total_token_throughput": 1511.36,
+  "median_ttft_ms": 12.42,
+  "p99_ttft_ms": 47.26,
+  "p95_ttft_ms": 34.2,
+  "median_tpot_ms": 0.82,
+  "p99_tpot_ms": 0.94,
+  "p95_tpot_ms": 0.91,
+  "median_itl_ms": 0.84,
+  "p99_itl_ms": 1.17,
+  "p95_itl_ms": 0.99,
+  "median_e2el_ms": 37.94,
+  "p99_e2el_ms": 73.66,
+  "p95_e2el_ms": 61.12,
+  "gpu_metrics": {
+    "7": {
+      "avg_gpu_util_percent": 1.655367231638418,
+      "peak_gpu_util_percent": 47,
+      "avg_gpu_mem_mb": 74400.5663841808,
+      "peak_gpu_mem_mb": 74404.25
+    }
+  }
+}
+
+    Stderr Output (last 1000 chars):
+    /home/aditya.veerkar/envs/newenv/lib/python3.12/site-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+
+  0%|          | 0/10 [00:00<?, ?it/s]
+ 20%|██        | 2/10 [00:00<00:00, 17.11it/s]
+ 50%|█████     | 5/10 [00:00<00:00, 22.49it/s]
+ 80%|████████  | 8/10 [00:00<00:00, 24.01it/s]
+100%|██████████| 10/10 [00:00<00:00, 23.63it/s]
+
+
+    Stdout Output (last 1000 chars):
+         16.22     
+Median TTFT (ms):                        12.42     
+P95 TTFT (ms):                           34.20     
+P99 TTFT (ms):                           47.26     
+-----Time per Output Token (excl. 1st token)------
+Mean TPOT (ms):                          0.83      
+Median TPOT (ms):                        0.82      
+P95 TPOT (ms):                           0.91      
+P99 TPOT (ms):                           0.94      
+---------------Inter-token Latency----------------
+Mean ITL (ms):                           0.83      
+Median ITL (ms):                         0.84      
+P95 ITL (ms):                            0.99      
+P99 ITL (ms):                            1.17      
+----------------End-to-end Latency----------------
+Mean E2EL (ms):                          42.04     
+Median E2EL (ms):                        37.94     
+P95 E2EL (ms):                           61.12     
+P99 E2EL (ms):                           73.66     
+==================================================
+
+    ====================================================================================================================================================================================
+    
