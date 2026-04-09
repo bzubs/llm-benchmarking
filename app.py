@@ -3,28 +3,40 @@ import pandas as pd
 import os
 import time
 from datetime import datetime
-from helper import fetch_hf_models, detect_model_type
+from helper import (
+    fetch_hf_models,
+    detect_model_type,
+    get_auth_headers,
+    fetch_history,
+    get_metric,
+)
 from resolver import CapabilityResolver
-from schema import BenchmarkConfig, BenchTaskResponse, DType, Quant, GPUType
-from configs import MODEL_CONFIGS, PRESET_CONFIGS
+from schemas.task import BenchmarkConfig, BenchTask, DType, Quant, GPUType
+from presets import MODEL_CONFIGS, PRESET_CONFIGS
 from login import show_auth_screen
-from dotenv import load_dotenv
+from config_loader import load_config
 import requests
 
-load_dotenv()
+# load_dotenv()
+config = load_config()
 
 # CONFIG FOR FILES
-history_file = os.getenv("HISTORY_FILE", "runs_history.jsonl")
+# history_file = os.getenv("HISTORY_FILE", "runs_history.jsonl")
+
+history_file = config.history_file
+
 
 # CONFIG FOR BACKEND
-backend_port = os.getenv("BACKEND_PORT")
-BACKEND_URL = f"http://127.0.0.1:{backend_port}"
+# backend_port = os.getenv("BACKEND_PORT")
+# backend_url = f"http://127.0.0.1:{backend_port}"
+
+backend_port = config.router_port
+backend_url = f"http://127.0.0.1:{backend_port}"
 
 # CONFIG FOR GPUS
-gpu_ids_env = os.getenv("GPU_IDS", "")
-gpu_ids_env = gpu_ids_env.strip("[]")
-gpu_id_list = [int(x.strip()) for x in gpu_ids_env.split(",") if x.strip()]
-n_gpus_available = len(gpu_id_list)
+
+n_gpus_available = config.n_available_gpus
+
 
 st.set_page_config(page_title="vLLM Benchmark", layout="wide")
 
@@ -209,7 +221,11 @@ with benchmark_tab:
     )
 
     st.sidebar.subheader("GPU Info")
-    st.sidebar.markdown(f"Available count of GPUs: {n_gpus_available}")
+    st.sidebar.markdown("Available count of GPUs")
+    cols = st.sidebar.columns(len(n_gpus_available))
+
+    for col, (gpu, count) in zip(cols, n_gpus_available.items()):
+        col.metric(label=gpu, value=count)
     st.sidebar.markdown("-----")
 
     st.sidebar.subheader("Model Serving Parameters")
@@ -313,8 +329,9 @@ with benchmark_tab:
 
     # validations for early exit
     total_required = tp_size * dp_size
+    curr_gpus_available = n_gpus_available.get("gpu_type")
 
-    if total_required > n_gpus_available:
+    if curr_gpus_available and total_required > curr_gpus_available:
         st.sidebar.error(
             f"Invalid config: {total_required} exceeds available GPUs ({n_gpus_available})"
         )
@@ -325,7 +342,7 @@ with benchmark_tab:
             f"You are under-utilizing GPUs. {total_required} required are less than {n_gpus_required} provisioned GPUs. Decrement Required Number of GPUs"
         )
 
-    if n_gpus_required > n_gpus_available:
+    if curr_gpus_available and n_gpus_required > curr_gpus_available:
         st.sidebar.error(
             f"Requested GPUs ({n_gpus_required}) > available ({n_gpus_available})"
         )
@@ -334,7 +351,7 @@ with benchmark_tab:
     with st.sidebar:
         gpu_type = st.selectbox(
             "GPU Type",
-            ["H100", "L4", "L40s"],
+            ["H100", "L4", "L40"],
             index=0,
             help=f"""Available types of GPUs to run the benchmark on
             """,
@@ -503,7 +520,6 @@ with benchmark_tab:
         try:
             # Create benchmark config
             cfg = BenchmarkConfig(
-                username=str(st.session_state.username),
                 model_name=model_name,
                 dtype=DType(dtype),
                 max_model_len=max_model_len,
@@ -521,14 +537,17 @@ with benchmark_tab:
             )
 
             # Submit to backend
-            resp = requests.post(f"{BACKEND_URL}/submit", json=cfg.model_dump())
+            resp = requests.post(
+                f"{backend_url}/submit",
+                json=cfg.model_dump(),
+                headers=get_auth_headers(),
+            )
 
             if resp.status_code != 200:
                 raise Exception(f"Submit failed: {resp.text}")
 
             data = resp.json()
-
-            data = BenchTaskResponse(**data)
+            data = BenchTask(**data)
 
             task_id = data.id
             status = data.status
@@ -555,15 +574,18 @@ with benchmark_tab:
                     )
                     break
                 try:
-                    res = requests.get(f"{BACKEND_URL}/status/{task_id}", timeout=2)
+                    res = requests.get(
+                        f"{backend_url}/status/{task_id}",
+                        headers=get_auth_headers(),
+                        timeout=2,
+                    )
 
                     if res.status_code != 200:
                         progress_text.error("Failed to fetch status")
                         break
 
                     data = res.json()
-                    data = BenchTaskResponse(**data)
-
+                    data = BenchTask(**data)
                     status = data.status
 
                     # ---- STATUS HANDLING ----
@@ -593,6 +615,7 @@ with benchmark_tab:
                         progress_text.success("Benchmark Completed!")
 
                         result = data.result
+
                         break
 
                     elif status == "failed":
@@ -609,8 +632,6 @@ with benchmark_tab:
                 time.sleep(2)
 
             status_holder.empty()
-
-            #append jsonl history here;
 
             metrics = result.metrics if result else {}
 
@@ -723,7 +744,7 @@ with benchmark_tab:
             with tab2:
                 st.subheader("Benchmark Configuration")
                 if result:
-                    config = result.config
+                    config = data.config
                     st.json(config)
                 else:
                     st.warning(
@@ -825,119 +846,122 @@ with history_tab:
     st.header("Benchmark Run History")
     st.caption(f"Showing runs for user: {st.session_state.username}")
 
-    if not os.path.exists(history_file):
-        st.info("No benchmark history found yet.")
-        st.stop()
-
+    # ------------------------
+    # Fetch Data
+    # ------------------------
     try:
-        df = pd.read_json(history_file, lines=True)
+        tasks, err = fetch_history()
 
-        # Normalize column names
-        rename_map = {
-            "taskID": "task_id",
-            "task_status": "status",
-            "return_code": "returncode",
-        }
-        df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
+        if err:
+            st.error(err)
+            st.stop()
 
-        # Username filter (include nulls if needed)
-        if "username" in df.columns:
-            df = df[
-                (df["username"] == st.session_state.username) | (df["username"].isna())
-            ]
+        if not tasks:
+            st.info("No benchmark history found yet.")
+            st.stop()
+
+        df = pd.DataFrame(tasks)
+
+        # ------------------------
+        # Helper
+        # ------------------------
+        def get_metric(row, key):
+            try:
+                return row.get("result", {}).get("metrics", {}).get(key)
+            except:
+                return None
+
+        # ------------------------
+        # Extract Config
+        # ------------------------
+        df["model"] = df["config"].apply(
+            lambda x: x.get("model_name") if isinstance(x, dict) else None
+        )
+        df["gpu_type"] = df["config"].apply(
+            lambda x: x.get("gpu_type") if isinstance(x, dict) else None
+        )
+        df["num_prompts"] = df["config"].apply(
+            lambda x: x.get("num_prompts") if isinstance(x, dict) else None
+        )
+        df["input_len"] = df["config"].apply(
+            lambda x: x.get("input_len") if isinstance(x, dict) else None
+        )
+        df["output_len"] = df["config"].apply(
+            lambda x: x.get("output_len") if isinstance(x, dict) else None
+        )
+
+        # ------------------------
+        # Metrics
+        # ------------------------
+        df["request_throughput"] = df.apply(
+            lambda x: get_metric(x, "request_throughput"), axis=1
+        )
+        df["total_token_throughput"] = df.apply(
+            lambda x: get_metric(x, "total_token_throughput"), axis=1
+        )
+        df["median_ttft_ms"] = df.apply(
+            lambda x: get_metric(x, "median_ttft_ms"), axis=1
+        )
+        df["median_tpot_ms"] = df.apply(
+            lambda x: get_metric(x, "median_tpot_ms"), axis=1
+        )
+        df["median_itl_ms"] = df.apply(lambda x: get_metric(x, "median_itl_ms"), axis=1)
+        df["median_e2el_ms"] = df.apply(
+            lambda x: get_metric(x, "median_e2el_ms"), axis=1
+        )
+
+        # Runtime + timestamp
+        df["runtime_sec"] = df["result"].apply(
+            lambda x: x.get("runtime_sec") if isinstance(x, dict) else None
+        )
+        df["timestamp"] = pd.to_datetime(df["created_at"], errors="coerce")
 
     except Exception as e:
-        st.error(f"Failed to read history file: {str(e)}")
+        st.error(f"Failed to load history: {str(e)}")
         st.stop()
+
+    # Clean Data
+    df = df[df["timestamp"].notna()]
+    df = df.sort_values("timestamp", ascending=False)
 
     if df.empty:
-        st.info("You have no runs yet. Click on Run Benchmark to start your first one")
+        st.info("You have no valid runs yet.")
         st.stop()
 
-    # ------------------------
-    # Cleanup Columns
-    # ------------------------
-    df = df.drop(columns=["benchmark_type", "benchmark_mode"], errors="ignore")
-
-    # Convert timestamp safely
-    if "timestamp" in df.columns:
-        df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
-        df = df[df["timestamp"].notna()]
-
-    # Sort latest first
-    df = df.sort_values("timestamp", ascending=False, na_position="last")
-
     st.success(f"Total Runs Recorded: {len(df)}")
-
     st.divider()
 
-    # ------------------------
-    # Filters Section
-    # ------------------------
+    # Filters
     st.subheader("Filters")
 
     col1, col2 = st.columns(2)
 
     with col1:
-        model_options = sorted(df["model"].dropna().unique().tolist())
-        model_options.insert(0, "All Models")
-
-        selected_model = st.selectbox("Filter by Model", options=model_options, index=0)
+        model_options = ["All"] + sorted(df["model"].dropna().unique().tolist())
+        selected_model = st.selectbox("Model", model_options)
 
     with col2:
-        min_throughput = st.number_input(
-            "Min Throughput (req/sec)", min_value=0.0, value=0.0, step=1.0
-        )
+        gpu_options = ["All"] + sorted(df["gpu_type"].dropna().unique().tolist())
+        selected_gpu = st.selectbox("GPU Type", gpu_options)
 
-    col3, col4 = st.columns(2)
-
-    with col3:
-        if "timestamp" in df.columns:
-            date_range = st.date_input(
-                "Filter by Date Range",
-                value=(df["timestamp"].min().date(), df["timestamp"].max().date()),
-            )
-        else:
-            date_range = None
-
-    with col4:
-        gpu_threshold = st.slider("Min Avg GPU Utilization (%)", 0, 100, 0)
+    date_range = st.date_input(
+        "Date Range",
+        value=(df["timestamp"].min().date(), df["timestamp"].max().date()),
+    )
 
     # ------------------------
     # Apply Filters
     # ------------------------
     filtered_df = df.copy()
 
-    # Model filter
-    if selected_model != "All Models":
+    if selected_model != "All":
         filtered_df = filtered_df[filtered_df["model"] == selected_model]
 
-    # Throughput filter (FIXED)
-    throughput_col = None
-    if "request_throughput" in filtered_df.columns:
-        throughput_col = "request_throughput"
-    elif "total_token_throughput" in filtered_df.columns:
-        throughput_col = "total_token_throughput"
+    if selected_gpu != "All":
+        filtered_df = filtered_df[filtered_df["gpu_type"] == selected_gpu]
 
-    if throughput_col:
-        filtered_df = filtered_df[
-            filtered_df[throughput_col].fillna(0) >= min_throughput
-        ]
-
-    # GPU Util filter
-    if "avg_gpu_util_percent" in filtered_df.columns:
-        filtered_df = filtered_df[
-            filtered_df["avg_gpu_util_percent"].fillna(0) >= gpu_threshold
-        ]
-
-    # Date filter
-    if (
-        isinstance(date_range, tuple)
-        and len(date_range) == 2
-        and "timestamp" in filtered_df.columns
-    ):
+    if isinstance(date_range, tuple) and len(date_range) == 2:
         start_date, end_date = date_range
-
         filtered_df = filtered_df[
             (filtered_df["timestamp"].dt.date >= start_date)
             & (filtered_df["timestamp"].dt.date <= end_date)
@@ -946,10 +970,28 @@ with history_tab:
     st.divider()
 
     # ------------------------
-    # Display Results
+    # Display
     # ------------------------
     st.write(f"### Showing {len(filtered_df)} runs")
 
-    st.dataframe(filtered_df, width="stretch", hide_index=True)
+    columns_to_show = [
+        "_id",
+        "model",
+        "gpu_type",
+        "num_prompts",
+        "input_len",
+        "output_len",
+        "request_throughput",
+        "total_token_throughput",
+        "median_ttft_ms",
+        "median_tpot_ms",
+        "median_itl_ms",
+        "median_e2el_ms",
+        "runtime_sec",
+        "status",
+        "timestamp",
+    ]
+
+    st.dataframe(filtered_df[columns_to_show], width="stretch", hide_index=True)
 
     st.divider()
